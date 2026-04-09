@@ -1,0 +1,18 @@
+{
+  "name": "atlatools",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "atla-jira": "./src/jira/index.ts",
+    "atla-bb": "./src/bitbucket/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "commander": "^14.0.3"
+  }
+}
