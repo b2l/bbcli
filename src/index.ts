@@ -4,8 +4,8 @@ import { Command } from "commander";
 const program = new Command();
 
 program
-  .name("atla-bb")
-  .description("CLI for interacting with Bitbucket")
+  .name("bb")
+  .description("CLI for interacting with Bitbucket Cloud")
   .version("0.0.1");
 
 program.parse();

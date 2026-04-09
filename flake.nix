@@ -1,5 +1,5 @@
 {
-  description = "atlatools — Jira and Bitbucket CLIs";
+  description = "bbcli — a gh-equivalent CLI for Bitbucket Cloud";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -11,7 +11,7 @@
       pkgs = import nixpkgs { inherit system; };
     in {
       devShells.${system}.default = pkgs.mkShell {
-        name = "atlatools-shell";
+        name = "bbcli-shell";
 
         buildInputs = with pkgs; [
           bun

@@ -1,10 +1,9 @@
 {
-  "name": "atlatools",
+  "name": "bbcli",
   "type": "module",
   "private": true,
   "bin": {
-    "atla-jira": "./src/jira/index.ts",
-    "atla-bb": "./src/bitbucket/index.ts"
+    "bb": "./src/index.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
