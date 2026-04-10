@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { registerAuthCommands } from "./commands/auth/index.ts";
 
 const program = new Command();
 
@@ -8,4 +9,6 @@ program
   .description("CLI for interacting with Bitbucket Cloud")
   .version("0.0.1");
 
-program.parse();
+registerAuthCommands(program);
+
+await program.parseAsync();
