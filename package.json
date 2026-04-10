@@ -5,13 +5,19 @@
   "bin": {
     "bb": "./src/index.ts"
   },
+  "scripts": {
+    "generate:api": "bun run scripts/generate-api.ts"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "openapi-typescript": "^7.13.0"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "commander": "^14.0.3"
+    "commander": "^14.0.3",
+    "openapi-fetch": "^0.17.0",
+    "zod": "^4.3.6"
   }
 }
