@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth/index.ts";
+import { registerRepoCommands } from "./commands/repo/index.ts";
 import { registerWorkspaceCommands } from "./commands/workspace/index.ts";
 
 const program = new Command();
@@ -12,6 +13,7 @@ program
   .option("--json", "Output machine-readable JSON");
 
 registerAuthCommands(program);
+registerRepoCommands(program);
 registerWorkspaceCommands(program);
 
 await program.parseAsync();
