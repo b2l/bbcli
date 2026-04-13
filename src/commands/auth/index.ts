@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { withRenderer } from "../../shared/renderer/commander.ts";
 import { runAuthStatus } from "./status.ts";
 
 export function registerAuthCommands(program: Command): void {
@@ -9,5 +10,5 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("status")
     .description("Verify that the configured Bitbucket credentials work")
-    .action(runAuthStatus);
+    .action(withRenderer(runAuthStatus));
 }
