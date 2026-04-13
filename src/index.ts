@@ -8,7 +8,8 @@ const program = new Command();
 program
   .name("bb")
   .description("CLI for interacting with Bitbucket Cloud")
-  .version("0.0.1");
+  .version("0.0.1")
+  .option("--json", "Output machine-readable JSON");
 
 registerAuthCommands(program);
 registerWorkspaceCommands(program);

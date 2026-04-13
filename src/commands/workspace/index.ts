@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { withRenderer } from "../../shared/renderer/commander.ts";
 import { runWorkspaceList } from "./list.ts";
 
 export function registerWorkspaceCommands(program: Command): void {
@@ -9,5 +10,5 @@ export function registerWorkspaceCommands(program: Command): void {
   workspace
     .command("list")
     .description("List workspaces you have access to")
-    .action(runWorkspaceList);
+    .action(withRenderer(runWorkspaceList));
 }

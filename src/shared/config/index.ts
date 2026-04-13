@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Renderer } from "../renderer/index.ts";
 
 export type Config = { email: string; token: string };
 
@@ -48,19 +49,19 @@ export async function loadConfig(path = defaultConfigPath()): Promise<Config> {
 
 const TOKEN_URL = "https://id.atlassian.com/manage-profile/security/api-tokens";
 
-export async function loadConfigOrExit(): Promise<Config> {
+export async function loadConfigOrExit(renderer: Renderer): Promise<Config> {
   try {
     return await loadConfig();
   } catch (err) {
     if (err instanceof ConfigError) {
-      printSetupInstructions(err.message);
+      renderer.error(buildSetupInstructions(err.message));
       process.exit(1);
     }
     throw err;
   }
 }
 
-function printSetupInstructions(reason: string): void {
+function buildSetupInstructions(reason: string): string {
   const lines = [
     reason,
     "",
@@ -91,7 +92,7 @@ function printSetupInstructions(reason: string): void {
     "",
     "  3. Re-run `bb auth status` to verify.",
   ];
-  console.error(lines.join("\n"));
+  return lines.join("\n");
 }
 
 async function runTokenCommand(argv: string[]): Promise<string> {

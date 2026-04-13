@@ -1,21 +1,26 @@
 import {
   BitbucketAuthError,
   verifyCredentials,
+  type BitbucketAccount,
 } from "../../backend/auth/index.ts";
 import { loadConfigOrExit } from "../../shared/config/index.ts";
+import type { Renderer } from "../../shared/renderer/index.ts";
 
-export async function runAuthStatus(): Promise<void> {
-  const config = await loadConfigOrExit();
+export async function runAuthStatus(renderer: Renderer): Promise<void> {
+  const config = await loadConfigOrExit(renderer);
 
   try {
     const account = await verifyCredentials(config);
-    const displayName = account.display_name ?? config.email;
-    console.log(
-      `Logged in to Bitbucket Cloud as ${displayName} (${config.email}).`,
+    renderer.detail<BitbucketAccount & { email: string }>(
+      { ...account, email: config.email },
+      [
+        { label: "Account", value: (a) => a.display_name ?? "(no name)" },
+        { label: "Email", value: (a) => a.email },
+      ],
     );
   } catch (err) {
     if (err instanceof BitbucketAuthError) {
-      console.error(err.message);
+      renderer.error(err.message);
       process.exit(1);
     }
     throw err;
