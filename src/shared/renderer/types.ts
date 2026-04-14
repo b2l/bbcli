@@ -4,6 +4,13 @@ export type Column<T> = {
   header: string;
   value: (item: T) => string;
   style?: Style;
+  /**
+   * When the table would overflow the terminal width, the first column
+   * marked `flex: true` gets truncated with `…` to make the row fit on
+   * one line. Columns that carry data the user needs verbatim (ids, urls,
+   * states) should leave this off.
+   */
+  flex?: boolean;
 };
 
 export type Field<T> = {
