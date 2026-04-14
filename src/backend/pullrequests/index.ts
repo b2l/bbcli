@@ -1,10 +1,9 @@
 import {
-  BASE_URL,
   createBitbucketClient,
   type Credentials,
 } from "../../shared/bitbucket-http/index.ts";
 import {
-  paginate,
+  withPagination,
   PaginationError,
 } from "../../shared/bitbucket-http/paginate.ts";
 import type { components } from "../../shared/bitbucket-http/generated";
@@ -95,25 +94,29 @@ export async function listPullRequests(
   ref: { workspace: string; slug: string },
   options: ListPullRequestsOptions,
 ): Promise<PullRequest[]> {
-  const url = new URL(
-    `${BASE_URL}/repositories/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.slug)}/pullrequests`,
-  );
-  url.searchParams.set("sort", "-updated_on");
-  url.searchParams.set("pagelen", String(PAGELEN));
-
+  const client = createBitbucketClient(credentials);
   const states = STATE_MAP[options.state];
   const filterBbql = buildBbql(options);
-  if (filterBbql) {
-    // Bitbucket ignores the `state=` query param when `q` is also set, so
-    // the state filter must live inside the BBQL expression instead.
-    url.searchParams.set("q", `${stateBbql(states)} AND ${filterBbql}`);
-  } else {
-    for (const s of states) url.searchParams.append("state", s);
-  }
+
+  // Bitbucket ignores the `state=` query param when `q` is also set, so
+  // when we have a BBQL filter the state constraint has to live inside it.
+  const query = filterBbql
+    ? {
+        sort: "-updated_on",
+        pagelen: PAGELEN,
+        q: `${stateBbql(states)} AND ${filterBbql}`,
+      }
+    : { sort: "-updated_on", pagelen: PAGELEN, state: states };
 
   try {
-    const raw = await paginate<RawPullRequest>(
-      url.toString(),
+    const raw = await withPagination(
+      () =>
+        client.GET("/repositories/{workspace}/{repo_slug}/pullrequests", {
+          params: {
+            path: { workspace: ref.workspace, repo_slug: ref.slug },
+            query,
+          },
+        }),
       credentials,
       { limit: options.limit },
     );
