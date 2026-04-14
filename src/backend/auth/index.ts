@@ -23,9 +23,8 @@ export class BitbucketAuthError extends Error {
  */
 export async function verifyCredentials(
   credentials: Credentials,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<BitbucketAccount> {
-  const client = createBitbucketClient(credentials, fetchImpl);
+  const client = createBitbucketClient(credentials);
   const { data, response } = await client.GET("/user");
 
   if (response.status === 401) {

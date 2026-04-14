@@ -40,7 +40,6 @@ export async function paginate<T>(
   url: string,
   credentials: Credentials,
   opts: { limit: number },
-  fetchImpl: typeof fetch = fetch,
 ): Promise<T[]> {
   if (new URL(url).origin !== ALLOWED_ORIGIN) {
     throw new PaginationError(
@@ -48,7 +47,7 @@ export async function paginate<T>(
     );
   }
 
-  const response = await fetchImpl(url, {
+  const response = await fetch(url, {
     headers: {
       Authorization: basicAuthHeader(credentials),
       Accept: "application/json",
@@ -69,7 +68,6 @@ export async function paginate<T>(
       page.next,
       credentials,
       { limit: opts.limit - taken.length },
-      fetchImpl,
     );
     return [...taken, ...rest];
   }

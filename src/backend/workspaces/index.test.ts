@@ -1,41 +1,26 @@
 import { test, expect, describe } from "bun:test";
+import { http, HttpResponse } from "msw";
 import { listWorkspaces, WorkspaceError } from "./index.ts";
+import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 
-/**
- * openapi-fetch passes a Request object, so we pull the URL from it.
- */
-function mockFetch(
-  routes: Record<string, { status: number; body: unknown }>,
-): typeof fetch {
-  return (async (input: Request) => {
-    const { pathname } = new URL(input.url);
-    const key = pathname.replace("/2.0", "");
-    const route = routes[key];
-    if (!route) throw new Error(`Unexpected request: ${key}`);
-    return new Response(JSON.stringify(route.body), {
-      status: route.status,
-      headers: { "Content-Type": "application/json" },
-    });
-  }) as unknown as typeof fetch;
-}
+setupMsw();
 
 const creds = { email: "a@b.co", token: "t" };
 
 describe("listWorkspaces", () => {
   test("returns workspaces with slug and admin flag", async () => {
-    const f = mockFetch({
-      "/user/workspaces": {
-        status: 200,
-        body: {
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user/workspaces`, () =>
+        HttpResponse.json({
           values: [
             { workspace: { slug: "team-a", uuid: "{aaa}" }, administrator: true },
             { workspace: { slug: "team-b", uuid: "{bbb}" }, administrator: false },
           ],
-        },
-      },
-    });
+        }),
+      ),
+    );
 
-    const result = await listWorkspaces(creds, f);
+    const result = await listWorkspaces(creds);
     expect(result).toEqual([
       { slug: "team-a", administrator: true },
       { slug: "team-b", administrator: false },
@@ -43,22 +28,40 @@ describe("listWorkspaces", () => {
   });
 
   test("returns empty array when user has no workspaces", async () => {
-    const f = mockFetch({
-      "/user/workspaces": { status: 200, body: { values: [] } },
-    });
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user/workspaces`, () =>
+        HttpResponse.json({ values: [] }),
+      ),
+    );
 
-    const result = await listWorkspaces(creds, f);
+    const result = await listWorkspaces(creds);
     expect(result).toEqual([]);
   });
 
   test("throws WorkspaceError on failure", async () => {
-    const f = mockFetch({
-      "/user/workspaces": { status: 401, body: { type: "error" } },
-    });
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user/workspaces`, () =>
+        HttpResponse.json({ type: "error" }, { status: 401 }),
+      ),
+    );
 
-    const err = await listWorkspaces(creds, f).catch((e) => e);
+    const err = await listWorkspaces(creds).catch((e) => e);
     expect(err).toBeInstanceOf(WorkspaceError);
     expect((err as WorkspaceError).status).toBe(401);
   });
 
+  test("sends pagelen=100 on the request", async () => {
+    // New assertion capability msw gives us: inspect the actual outgoing
+    // request rather than hand-rolling URL parsing in the mock.
+    let seenPagelen = null as string | null;
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user/workspaces`, ({ request }) => {
+        seenPagelen = new URL(request.url).searchParams.get("pagelen");
+        return HttpResponse.json({ values: [] });
+      }),
+    );
+
+    await listWorkspaces(creds);
+    expect(seenPagelen!).toBe("100");
+  });
 });

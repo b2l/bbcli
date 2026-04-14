@@ -94,7 +94,6 @@ export async function listPullRequests(
   credentials: Credentials,
   ref: { workspace: string; slug: string },
   options: ListPullRequestsOptions,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<PullRequest[]> {
   const url = new URL(
     `${BASE_URL}/repositories/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.slug)}/pullrequests`,
@@ -117,7 +116,6 @@ export async function listPullRequests(
       url.toString(),
       credentials,
       { limit: options.limit },
-      fetchImpl,
     );
     return raw.map(toPullRequest);
   } catch (err) {
@@ -195,9 +193,8 @@ export async function getPullRequest(
   credentials: Credentials,
   ref: { workspace: string; slug: string },
   id: number,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<PullRequestDetail> {
-  const client = createBitbucketClient(credentials, fetchImpl);
+  const client = createBitbucketClient(credentials);
   const { data, response } = await client.GET(
     "/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}",
     {
@@ -233,9 +230,8 @@ export async function findOpenPullRequestForBranch(
   credentials: Credentials,
   ref: { workspace: string; slug: string },
   branch: string,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<PullRequest | null> {
-  const client = createBitbucketClient(credentials, fetchImpl);
+  const client = createBitbucketClient(credentials);
   const { data, response } = await client.GET(
     "/repositories/{workspace}/{repo_slug}/pullrequests",
     {

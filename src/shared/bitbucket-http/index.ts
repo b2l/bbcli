@@ -21,12 +21,10 @@ export function basicAuthHeader(credentials: Credentials): string {
 
 /**
  * Builds a typed Bitbucket Cloud API client with HTTP Basic auth baked in.
- * The `fetchImpl` override exists so tests can inject a mock; production
- * code should pass nothing and get the global `fetch`.
+ * Tests intercept the global `fetch` via msw; no injection seam needed.
  */
 export function createBitbucketClient(
   credentials: Credentials,
-  fetchImpl: typeof fetch = fetch,
 ): BitbucketClient {
   return createClient<paths>({
     baseUrl: BASE_URL,
@@ -34,6 +32,5 @@ export function createBitbucketClient(
       Authorization: basicAuthHeader(credentials),
       Accept: "application/json",
     },
-    fetch: fetchImpl,
   });
 }
