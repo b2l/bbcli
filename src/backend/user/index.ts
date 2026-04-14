@@ -24,9 +24,8 @@ export class UserError extends Error {
  */
 export async function getCurrentUser(
   credentials: Credentials,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<CurrentUser> {
-  const client = createBitbucketClient(credentials, fetchImpl);
+  const client = createBitbucketClient(credentials);
 
   const { data, response } = await client.GET("/user");
 

@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { http, HttpResponse } from "msw";
 import {
   findOpenPullRequestForBranch,
   getPullRequest,
@@ -7,40 +8,16 @@ import {
   type PullRequest,
   type PullRequestDetail,
 } from "./index.ts";
+import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 
-type Call = { pathname: string; searchParams: URLSearchParams };
-
-type Handler = (req: {
-  pathname: string;
-  searchParams: URLSearchParams;
-}) => { status: number; body: unknown };
-
-function mockFetch(handler: Handler): {
-  fetch: typeof fetch;
-  calls: Call[];
-} {
-  const calls: Call[] = [];
-  const f = (async (input: string | URL | Request) => {
-    const raw =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-    const url = new URL(raw);
-    const pathname = url.pathname.replace("/2.0", "");
-    calls.push({ pathname, searchParams: url.searchParams });
-    const { status, body } = handler({ pathname, searchParams: url.searchParams });
-    return new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    });
-  }) as unknown as typeof fetch;
-  return { fetch: f, calls };
-}
+setupMsw();
 
 const creds = { email: "a@b.co", token: "t" };
 const ref = { workspace: "ws", slug: "repo" };
+
+const PR_LIST_PATH = `${BITBUCKET_BASE}/repositories/ws/repo/pullrequests`;
+const PR_DETAIL_PATH = (id: number) =>
+  `${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}`;
 
 function makePr(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -54,324 +31,6 @@ function makePr(overrides: Record<string, unknown> = {}): Record<string, unknown
     ...overrides,
   };
 }
-
-describe("listPullRequests", () => {
-  test("default query: state=OPEN, sort=-updated_on", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [makePr({ id: 42, title: "fix bug" })] },
-    }));
-
-    const result = await listPullRequests(
-      creds,
-      ref,
-      { state: "open", limit: 30 },
-      fetch,
-    );
-
-    expect(calls).toHaveLength(1);
-    const call = calls[0]!;
-    expect(call.pathname).toBe("/repositories/ws/repo/pullrequests");
-    expect(call.searchParams.getAll("state")).toEqual(["OPEN"]);
-    expect(call.searchParams.get("sort")).toBe("-updated_on");
-    expect(call.searchParams.has("q")).toBe(false);
-    expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe(42);
-    expect(result[0]!.title).toBe("fix bug");
-  });
-
-  test("state=all expands to repeated state params", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      { state: "all", limit: 30 },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.getAll("state")).toEqual([
-      "OPEN",
-      "MERGED",
-      "DECLINED",
-      "SUPERSEDED",
-    ]);
-  });
-
-  test("author @me builds BBQL with uuid", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      {
-        state: "open",
-        limit: 30,
-        author: { kind: "me" },
-        currentUserUuid: "{uuid-1}",
-      },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.get("q")).toBe(
-      'state="OPEN" AND author.uuid="{uuid-1}"',
-    );
-  });
-
-  test("author nickname builds BBQL with nickname", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      {
-        state: "open",
-        limit: 30,
-        author: { kind: "nickname", value: "jsmith" },
-      },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.get("q")).toBe(
-      'state="OPEN" AND author.nickname="jsmith"',
-    );
-  });
-
-  test("author and reviewer are combined with AND", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      {
-        state: "open",
-        limit: 30,
-        author: { kind: "nickname", value: "alice" },
-        reviewer: { kind: "nickname", value: "bob" },
-      },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.get("q")).toBe(
-      'state="OPEN" AND author.nickname="alice" AND reviewers.nickname="bob"',
-    );
-  });
-
-  test("state filter is folded into q when a user filter is present", async () => {
-    // Bitbucket ignores the `state=` query param when `q` is set, so the
-    // state constraint has to live inside the BBQL expression.
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      {
-        state: "open",
-        limit: 30,
-        reviewer: { kind: "me" },
-        currentUserUuid: "{me-uuid}",
-      },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.getAll("state")).toEqual([]);
-    expect(calls[0]!.searchParams.get("q")).toBe(
-      'state="OPEN" AND reviewers.uuid="{me-uuid}"',
-    );
-  });
-
-  test("multi-state folds into q as OR group when combined with a filter", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [] },
-    }));
-
-    await listPullRequests(
-      creds,
-      ref,
-      {
-        state: "all",
-        limit: 30,
-        author: { kind: "nickname", value: "alice" },
-      },
-      fetch,
-    );
-
-    expect(calls[0]!.searchParams.getAll("state")).toEqual([]);
-    expect(calls[0]!.searchParams.get("q")).toBe(
-      '(state="OPEN" OR state="MERGED" OR state="DECLINED" OR state="SUPERSEDED") AND author.nickname="alice"',
-    );
-  });
-
-  test("follows next cursor until limit reached", async () => {
-    const { fetch, calls } = mockFetch(({ searchParams }) => {
-      const page = searchParams.get("page") ?? "1";
-      const values = page === "1"
-        ? [makePr({ id: 1 }), makePr({ id: 2 })]
-        : [makePr({ id: 3 }), makePr({ id: 4 })];
-      const next = page === "1"
-        ? "https://api.bitbucket.org/2.0/repositories/ws/repo/pullrequests?page=2&state=OPEN&sort=-updated_on&pagelen=50"
-        : undefined;
-      return { status: 200, body: { values, next } };
-    });
-
-    const result = await listPullRequests(
-      creds,
-      ref,
-      { state: "open", limit: 3 },
-      fetch,
-    );
-
-    expect(result.map((r) => r.id)).toEqual([1, 2, 3]);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.searchParams.get("page")).toBe("2");
-  });
-
-  test("stops paging when Bitbucket omits next even if under limit", async () => {
-    const { fetch, calls } = mockFetch(({ searchParams }) => {
-      const page = searchParams.get("page") ?? "1";
-      if (page === "1") {
-        return {
-          status: 200,
-          body: {
-            values: [makePr({ id: 1 }), makePr({ id: 2 })],
-            next: "https://api.bitbucket.org/2.0/repositories/ws/repo/pullrequests?page=2",
-          },
-        };
-      }
-      return { status: 200, body: { values: [makePr({ id: 3 })] } };
-    });
-
-    const result = await listPullRequests(
-      creds,
-      ref,
-      { state: "open", limit: 100 },
-      fetch,
-    );
-
-    expect(result.map((r) => r.id)).toEqual([1, 2, 3]);
-    expect(calls).toHaveLength(2);
-  });
-
-  test("next cursor preserves repeated state params and sort", async () => {
-    const { fetch, calls } = mockFetch(({ searchParams }) => {
-      const page = searchParams.get("page");
-      if (!page) {
-        return {
-          status: 200,
-          body: {
-            values: [makePr({ id: 1 })],
-            next: "https://api.bitbucket.org/2.0/repositories/ws/repo/pullrequests?page=2&state=OPEN&state=MERGED&sort=-updated_on",
-          },
-        };
-      }
-      return { status: 200, body: { values: [] } };
-    });
-
-    await listPullRequests(
-      creds,
-      ref,
-      { state: "all", limit: 100 },
-      fetch,
-    );
-
-    expect(calls[1]!.searchParams.getAll("state")).toEqual(["OPEN", "MERGED"]);
-    expect(calls[1]!.searchParams.get("sort")).toBe("-updated_on");
-    expect(calls[1]!.searchParams.get("page")).toBe("2");
-  });
-
-  test("maps API fields to summary shape", async () => {
-    const { fetch } = mockFetch(() => ({
-      status: 200,
-      body: {
-        values: [
-          makePr({
-            id: 7,
-            title: "Refactor auth",
-            state: "MERGED",
-            author: {
-              uuid: "{alice-uuid}",
-              display_name: "Alice A.",
-              nickname: "alice",
-            },
-            created_on: "2026-04-01T10:00:00Z",
-            updated_on: "2026-04-12T10:00:00Z",
-            links: { html: { href: "https://bitbucket.org/ws/repo/pull-requests/7" } },
-          }),
-        ],
-      },
-    }));
-
-    const result = await listPullRequests(
-      creds,
-      ref,
-      { state: "all", limit: 10 },
-      fetch,
-    );
-
-    expect(result[0]).toEqual<PullRequest>({
-      id: 7,
-      title: "Refactor auth",
-      state: "MERGED",
-      author: {
-        uuid: "{alice-uuid}",
-        displayName: "Alice A.",
-        nickname: "alice",
-      },
-      createdOn: "2026-04-01T10:00:00Z",
-      updatedOn: "2026-04-12T10:00:00Z",
-      url: "https://bitbucket.org/ws/repo/pull-requests/7",
-    });
-  });
-
-  test("author is null when raw has no uuid (deleted user)", async () => {
-    const { fetch } = mockFetch(() => ({
-      status: 200,
-      body: {
-        values: [makePr({ id: 9, author: null })],
-      },
-    }));
-
-    const result = await listPullRequests(
-      creds,
-      ref,
-      { state: "all", limit: 10 },
-      fetch,
-    );
-
-    expect(result[0]!.author).toBeNull();
-  });
-
-  test("throws PullRequestError on non-ok response", async () => {
-    const { fetch } = mockFetch(() => ({ status: 404, body: { type: "error" } }));
-
-    const err = await listPullRequests(
-      creds,
-      ref,
-      { state: "open", limit: 30 },
-      fetch,
-    ).catch((e) => e);
-
-    expect(err).toBeInstanceOf(PullRequestError);
-    expect((err as PullRequestError).status).toBe(404);
-  });
-
-});
 
 function makePrDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -412,17 +71,297 @@ function makePrDetail(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
-describe("getPullRequest", () => {
-  test("fetches and maps a single PR to PullRequestDetail", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: makePrDetail(),
-    }));
+/**
+ * Records every request seen at `path`, handing each to `responder` to
+ * produce the mocked response. Returns the list of captured URLSearchParams
+ * so tests can assert on query shape.
+ */
+function captureListRequests(
+  responder: (req: Request) => Response | Promise<Response>,
+): URLSearchParams[] {
+  const calls: URLSearchParams[] = [];
+  server.use(
+    http.get(PR_LIST_PATH, async ({ request }) => {
+      calls.push(new URL(request.url).searchParams);
+      return responder(request);
+    }),
+  );
+  return calls;
+}
 
-    const result = await getPullRequest(creds, ref, 42, fetch);
+describe("listPullRequests", () => {
+  test("default query: state=OPEN, sort=-updated_on", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [makePr({ id: 42, title: "fix bug" })] }),
+    );
+
+    const result = await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+    });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.pathname).toBe("/repositories/ws/repo/pullrequests/42");
+    const params = calls[0]!;
+    expect(params.getAll("state")).toEqual(["OPEN"]);
+    expect(params.get("sort")).toBe("-updated_on");
+    expect(params.has("q")).toBe(false);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.id).toBe(42);
+    expect(result[0]!.title).toBe("fix bug");
+  });
+
+  test("state=all expands to repeated state params", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, { state: "all", limit: 30 });
+
+    expect(calls[0]!.getAll("state")).toEqual([
+      "OPEN",
+      "MERGED",
+      "DECLINED",
+      "SUPERSEDED",
+    ]);
+  });
+
+  test("author @me builds BBQL with uuid", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+      author: { kind: "me" },
+      currentUserUuid: "{uuid-1}",
+    });
+
+    expect(calls[0]!.get("q")).toBe(
+      'state="OPEN" AND author.uuid="{uuid-1}"',
+    );
+  });
+
+  test("author nickname builds BBQL with nickname", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+      author: { kind: "nickname", value: "jsmith" },
+    });
+
+    expect(calls[0]!.get("q")).toBe(
+      'state="OPEN" AND author.nickname="jsmith"',
+    );
+  });
+
+  test("author and reviewer are combined with AND", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+      author: { kind: "nickname", value: "alice" },
+      reviewer: { kind: "nickname", value: "bob" },
+    });
+
+    expect(calls[0]!.get("q")).toBe(
+      'state="OPEN" AND author.nickname="alice" AND reviewers.nickname="bob"',
+    );
+  });
+
+  test("state filter is folded into q when a user filter is present", async () => {
+    // Bitbucket ignores the `state=` query param when `q` is set, so the
+    // state constraint has to live inside the BBQL expression.
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+      reviewer: { kind: "me" },
+      currentUserUuid: "{me-uuid}",
+    });
+
+    expect(calls[0]!.getAll("state")).toEqual([]);
+    expect(calls[0]!.get("q")).toBe(
+      'state="OPEN" AND reviewers.uuid="{me-uuid}"',
+    );
+  });
+
+  test("multi-state folds into q as OR group when combined with a filter", async () => {
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
+    );
+
+    await listPullRequests(creds, ref, {
+      state: "all",
+      limit: 30,
+      author: { kind: "nickname", value: "alice" },
+    });
+
+    expect(calls[0]!.getAll("state")).toEqual([]);
+    expect(calls[0]!.get("q")).toBe(
+      '(state="OPEN" OR state="MERGED" OR state="DECLINED" OR state="SUPERSEDED") AND author.nickname="alice"',
+    );
+  });
+
+  test("follows next cursor until limit reached", async () => {
+    const calls = captureListRequests(({ url }) => {
+      const page = new URL(url).searchParams.get("page") ?? "1";
+      const values = page === "1"
+        ? [makePr({ id: 1 }), makePr({ id: 2 })]
+        : [makePr({ id: 3 }), makePr({ id: 4 })];
+      const next = page === "1"
+        ? `${PR_LIST_PATH}?page=2&state=OPEN&sort=-updated_on&pagelen=50`
+        : undefined;
+      return HttpResponse.json({ values, next });
+    });
+
+    const result = await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 3,
+    });
+
+    expect(result.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.get("page")).toBe("2");
+  });
+
+  test("stops paging when Bitbucket omits next even if under limit", async () => {
+    const calls = captureListRequests(({ url }) => {
+      const page = new URL(url).searchParams.get("page") ?? "1";
+      if (page === "1") {
+        return HttpResponse.json({
+          values: [makePr({ id: 1 }), makePr({ id: 2 })],
+          next: `${PR_LIST_PATH}?page=2`,
+        });
+      }
+      return HttpResponse.json({ values: [makePr({ id: 3 })] });
+    });
+
+    const result = await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 100,
+    });
+
+    expect(result.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("next cursor preserves repeated state params and sort", async () => {
+    const calls = captureListRequests(({ url }) => {
+      const page = new URL(url).searchParams.get("page");
+      if (!page) {
+        return HttpResponse.json({
+          values: [makePr({ id: 1 })],
+          next: `${PR_LIST_PATH}?page=2&state=OPEN&state=MERGED&sort=-updated_on`,
+        });
+      }
+      return HttpResponse.json({ values: [] });
+    });
+
+    await listPullRequests(creds, ref, { state: "all", limit: 100 });
+
+    expect(calls[1]!.getAll("state")).toEqual(["OPEN", "MERGED"]);
+    expect(calls[1]!.get("sort")).toBe("-updated_on");
+    expect(calls[1]!.get("page")).toBe("2");
+  });
+
+  test("maps API fields to summary shape", async () => {
+    server.use(
+      http.get(PR_LIST_PATH, () =>
+        HttpResponse.json({
+          values: [
+            makePr({
+              id: 7,
+              title: "Refactor auth",
+              state: "MERGED",
+              author: {
+                uuid: "{alice-uuid}",
+                display_name: "Alice A.",
+                nickname: "alice",
+              },
+              created_on: "2026-04-01T10:00:00Z",
+              updated_on: "2026-04-12T10:00:00Z",
+              links: { html: { href: "https://bitbucket.org/ws/repo/pull-requests/7" } },
+            }),
+          ],
+        }),
+      ),
+    );
+
+    const result = await listPullRequests(creds, ref, {
+      state: "all",
+      limit: 10,
+    });
+
+    expect(result[0]).toEqual<PullRequest>({
+      id: 7,
+      title: "Refactor auth",
+      state: "MERGED",
+      author: {
+        uuid: "{alice-uuid}",
+        displayName: "Alice A.",
+        nickname: "alice",
+      },
+      createdOn: "2026-04-01T10:00:00Z",
+      updatedOn: "2026-04-12T10:00:00Z",
+      url: "https://bitbucket.org/ws/repo/pull-requests/7",
+    });
+  });
+
+  test("author is null when raw has no uuid (deleted user)", async () => {
+    server.use(
+      http.get(PR_LIST_PATH, () =>
+        HttpResponse.json({ values: [makePr({ id: 9, author: null })] }),
+      ),
+    );
+
+    const result = await listPullRequests(creds, ref, {
+      state: "all",
+      limit: 10,
+    });
+
+    expect(result[0]!.author).toBeNull();
+  });
+
+  test("throws PullRequestError on non-ok response", async () => {
+    server.use(
+      http.get(PR_LIST_PATH, () =>
+        HttpResponse.json({ type: "error" }, { status: 404 }),
+      ),
+    );
+
+    const err = await listPullRequests(creds, ref, {
+      state: "open",
+      limit: 30,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(PullRequestError);
+    expect((err as PullRequestError).status).toBe(404);
+  });
+});
+
+describe("getPullRequest", () => {
+  test("fetches and maps a single PR to PullRequestDetail", async () => {
+    let seenPath = null as string | null;
+    server.use(
+      http.get(PR_DETAIL_PATH(42), ({ request }) => {
+        seenPath = new URL(request.url).pathname;
+        return HttpResponse.json(makePrDetail());
+      }),
+    );
+
+    const result = await getPullRequest(creds, ref, 42);
+
+    expect(seenPath!).toBe("/2.0/repositories/ws/repo/pullrequests/42");
 
     expect(result).toEqual<PullRequestDetail>({
       id: 42,
@@ -453,64 +392,70 @@ describe("getPullRequest", () => {
   });
 
   test("throws PullRequestError on 404", async () => {
-    const { fetch } = mockFetch(() => ({ status: 404, body: { type: "error" } }));
-    const err = await getPullRequest(creds, ref, 99, fetch).catch((e) => e);
+    server.use(
+      http.get(PR_DETAIL_PATH(99), () =>
+        HttpResponse.json({ type: "error" }, { status: 404 }),
+      ),
+    );
+
+    const err = await getPullRequest(creds, ref, 99).catch((e) => e);
     expect(err).toBeInstanceOf(PullRequestError);
     expect((err as PullRequestError).status).toBe(404);
   });
 
   test("handles a PR with no participants", async () => {
-    const { fetch } = mockFetch(() => ({
-      status: 200,
-      body: makePrDetail({ participants: undefined }),
-    }));
-    const result = await getPullRequest(creds, ref, 42, fetch);
+    server.use(
+      http.get(PR_DETAIL_PATH(42), () =>
+        HttpResponse.json(makePrDetail({ participants: undefined })),
+      ),
+    );
+
+    const result = await getPullRequest(creds, ref, 42);
     expect(result.reviewers).toEqual([]);
   });
 });
 
 describe("findOpenPullRequestForBranch", () => {
   test("queries with BBQL filter on source branch and open state", async () => {
-    const { fetch, calls } = mockFetch(() => ({
-      status: 200,
-      body: { values: [makePrDetail({ id: 7 })] },
-    }));
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [makePrDetail({ id: 7 })] }),
+    );
 
     const result = await findOpenPullRequestForBranch(
       creds,
       ref,
       "feature/auth",
-      fetch,
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.searchParams.get("q")).toBe(
+    expect(calls[0]!.get("q")).toBe(
       'state="OPEN" AND source.branch.name="feature/auth"',
     );
-    expect(calls[0]!.searchParams.get("pagelen")).toBe("1");
+    expect(calls[0]!.get("pagelen")).toBe("1");
     expect(result?.id).toBe(7);
   });
 
   test("returns null when no open PR matches", async () => {
-    const { fetch } = mockFetch(() => ({ status: 200, body: { values: [] } }));
+    server.use(
+      http.get(PR_LIST_PATH, () => HttpResponse.json({ values: [] })),
+    );
+
     const result = await findOpenPullRequestForBranch(
       creds,
       ref,
       "feature/auth",
-      fetch,
     );
     expect(result).toBeNull();
   });
 
   test("escapes quotes in branch names", async () => {
-    const { fetch, calls } = mockFetch(() => ({ status: 200, body: { values: [] } }));
-    await findOpenPullRequestForBranch(
-      creds,
-      ref,
-      'weird"branch',
-      fetch,
+    const calls = captureListRequests(() =>
+      HttpResponse.json({ values: [] }),
     );
-    expect(calls[0]!.searchParams.get("q")).toBe(
+
+    await findOpenPullRequestForBranch(creds, ref, 'weird"branch');
+
+    expect(calls[0]!.get("q")).toBe(
       'state="OPEN" AND source.branch.name="weird\\"branch"',
     );
   });

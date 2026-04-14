@@ -24,9 +24,8 @@ export class WorkspaceError extends Error {
  */
 export async function listWorkspaces(
   credentials: Credentials,
-  fetchImpl: typeof fetch = fetch,
 ): Promise<WorkspaceInfo[]> {
-  const client = createBitbucketClient(credentials, fetchImpl);
+  const client = createBitbucketClient(credentials);
 
   const { data, response } = await client.GET("/user/workspaces", {
     params: { query: { pagelen: 100 } },

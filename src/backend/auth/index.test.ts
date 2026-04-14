@@ -1,27 +1,15 @@
 import { test, expect, describe } from "bun:test";
+import { http, HttpResponse } from "msw";
 import { verifyCredentials, BitbucketAuthError } from "./index.ts";
 import type { components } from "../../shared/bitbucket-http/generated";
+import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 
 type Account = components["schemas"]["account"];
 type BitbucketError = components["schemas"]["error"];
 
-/**
- * Canned-response fetch. verifyCredentials is tested for its behaviour on
- * different HTTP statuses — the URL + auth header concerns belong to the
- * shared bitbucket-http layer.
- *
- * Response bodies are typed against the generated schema so that drift in
- * Atlassian's OpenAPI spec breaks these tests at compile time instead of
- * silently masking real bugs.
- */
-function mockFetch(status: number, body: unknown = {}): typeof fetch {
-  const impl = async (): Promise<Response> =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    });
-  return impl as unknown as typeof fetch;
-}
+setupMsw();
+
+const creds = { email: "a@b.co", token: "t" };
 
 describe("verifyCredentials", () => {
   test("returns the account on HTTP 200", async () => {
@@ -30,10 +18,11 @@ describe("verifyCredentials", () => {
       display_name: "Alice Example",
       uuid: "{abc-123}",
     };
-    const user = await verifyCredentials(
-      { email: "a@b.co", token: "t" },
-      mockFetch(200, account),
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user`, () => HttpResponse.json(account)),
     );
+
+    const user = await verifyCredentials(creds);
     expect(user).toMatchObject(account);
   });
 
@@ -42,10 +31,13 @@ describe("verifyCredentials", () => {
       type: "error",
       error: { message: "Bad credentials" },
     };
-    const err = await verifyCredentials(
-      { email: "a@b.co", token: "bad" },
-      mockFetch(401, body),
-    ).catch((e) => e);
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user`, () =>
+        HttpResponse.json(body, { status: 401 }),
+      ),
+    );
+
+    const err = await verifyCredentials(creds).catch((e) => e);
     expect(err).toBeInstanceOf(BitbucketAuthError);
     expect((err as BitbucketAuthError).status).toBe(401);
     expect((err as BitbucketAuthError).message).toContain("rejected");
@@ -56,10 +48,13 @@ describe("verifyCredentials", () => {
       type: "error",
       error: { message: "Insufficient scopes" },
     };
-    const err = await verifyCredentials(
-      { email: "a@b.co", token: "bad" },
-      mockFetch(403, body),
-    ).catch((e) => e);
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user`, () =>
+        HttpResponse.json(body, { status: 403 }),
+      ),
+    );
+
+    const err = await verifyCredentials(creds).catch((e) => e);
     expect(err).toBeInstanceOf(BitbucketAuthError);
     expect((err as BitbucketAuthError).status).toBe(403);
     expect((err as BitbucketAuthError).message).toContain("account:read");
@@ -70,24 +65,24 @@ describe("verifyCredentials", () => {
       type: "error",
       error: { message: "Internal server error" },
     };
-    const err = await verifyCredentials(
-      { email: "a@b.co", token: "t" },
-      mockFetch(500, body),
-    ).catch((e) => e);
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user`, () =>
+        HttpResponse.json(body, { status: 500 }),
+      ),
+    );
+
+    const err = await verifyCredentials(creds).catch((e) => e);
     expect(err).toBeInstanceOf(BitbucketAuthError);
     expect((err as BitbucketAuthError).status).toBe(500);
     expect((err as BitbucketAuthError).message).toContain("500");
   });
 
-  test("propagates network errors from fetch", async () => {
-    const boom = new Error("network down");
-    const f = (async () => {
-      throw boom;
-    }) as unknown as typeof fetch;
-    const err = await verifyCredentials(
-      { email: "a@b.co", token: "t" },
-      f,
-    ).catch((e) => e);
-    expect(err).toBe(boom);
+  test("propagates network errors", async () => {
+    server.use(
+      http.get(`${BITBUCKET_BASE}/user`, () => HttpResponse.error()),
+    );
+
+    const err = await verifyCredentials(creds).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
   });
 });
