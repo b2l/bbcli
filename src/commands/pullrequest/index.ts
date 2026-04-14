@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
 import { runPullRequestList } from "./list.ts";
+import { runPullRequestView } from "./view.ts";
 
 export function registerPullRequestCommands(program: Command): void {
   const pr = program
@@ -30,4 +31,14 @@ export function registerPullRequestCommands(program: Command): void {
     )
     .option("-L, --limit <n>", "Maximum results", "30")
     .action(withRenderer(runPullRequestList));
+
+  pr
+    .command("view")
+    .description("Show a pull request's details (defaults to the PR for the current branch)")
+    .argument("[id]", "Pull request number")
+    .option(
+      "-R, --repository <workspace/repo>",
+      "Override repository detection",
+    )
+    .action(withRenderer(runPullRequestView));
 }

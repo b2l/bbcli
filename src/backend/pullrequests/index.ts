@@ -1,5 +1,6 @@
 import {
   BASE_URL,
+  createBitbucketClient,
   type Credentials,
 } from "../../shared/bitbucket-http/index.ts";
 import {
@@ -9,6 +10,7 @@ import {
 import type { components } from "../../shared/bitbucket-http/generated";
 
 type RawPullRequest = components["schemas"]["pullrequest"];
+type RawParticipant = components["schemas"]["participant"];
 
 export type PullRequestStateFilter = "open" | "merged" | "declined" | "all";
 
@@ -44,6 +46,20 @@ export type PullRequest = {
   createdOn: string;
   updatedOn: string;
   url: string;
+};
+
+export type ReviewState = "approved" | "changes_requested" | "pending";
+
+export type Reviewer = {
+  account: PullRequestAuthor;
+  state: ReviewState;
+};
+
+export type PullRequestDetail = PullRequest & {
+  description: string;
+  sourceBranch: string;
+  destinationBranch: string;
+  reviewers: Reviewer[];
 };
 
 export type ListPullRequestsOptions = {
@@ -168,4 +184,110 @@ function userFilterToBbql(
 
 function escapeBbql(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * Fetches a single pull request by id. Single typed call — the overlay
+ * (BBC2-38) gives us typed path params and response shape, so we stay on
+ * openapi-fetch's client rather than dropping to raw fetch.
+ */
+export async function getPullRequest(
+  credentials: Credentials,
+  ref: { workspace: string; slug: string },
+  id: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PullRequestDetail> {
+  const client = createBitbucketClient(credentials, fetchImpl);
+  const { data, response } = await client.GET(
+    "/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}",
+    {
+      params: {
+        path: {
+          workspace: ref.workspace,
+          repo_slug: ref.slug,
+          pull_request_id: id,
+        },
+      },
+    },
+  );
+
+  if (!response.ok || !data) {
+    throw new PullRequestError(
+      `Failed to fetch pull request #${id}: HTTP ${response.status}.`,
+      response.status,
+    );
+  }
+
+  return toPullRequestDetail(data as RawPullRequest);
+}
+
+/**
+ * Finds the currently open pull request whose source branch matches the
+ * given name, or returns null. BBQL `source.branch.name="..."` is a
+ * single-call filter; `pagelen=1` caps the response to the first match.
+ *
+ * Scoped to OPEN intentionally: if a branch has merged/declined PRs, we
+ * don't want to silently surface a stale one as "the PR for this branch."
+ */
+export async function findOpenPullRequestForBranch(
+  credentials: Credentials,
+  ref: { workspace: string; slug: string },
+  branch: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PullRequest | null> {
+  const client = createBitbucketClient(credentials, fetchImpl);
+  const { data, response } = await client.GET(
+    "/repositories/{workspace}/{repo_slug}/pullrequests",
+    {
+      params: {
+        path: { workspace: ref.workspace, repo_slug: ref.slug },
+        query: {
+          q: `state="OPEN" AND source.branch.name="${escapeBbql(branch)}"`,
+          pagelen: 1,
+          sort: "-updated_on",
+        },
+      },
+    },
+  );
+
+  if (!response.ok || !data) {
+    throw new PullRequestError(
+      `Failed to search pull requests: HTTP ${response.status}.`,
+      response.status,
+    );
+  }
+
+  const first = data.values?.[0];
+  return first ? toPullRequest(first as RawPullRequest) : null;
+}
+
+function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
+  const base = toPullRequest(pr);
+  const raw = pr as Record<string, any>;
+  return {
+    ...base,
+    description: String(raw.summary?.raw ?? raw.description ?? ""),
+    sourceBranch: String(raw.source?.branch?.name ?? ""),
+    destinationBranch: String(raw.destination?.branch?.name ?? ""),
+    reviewers: toReviewers(raw.participants),
+  };
+}
+
+function toReviewers(raw: unknown): Reviewer[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Reviewer[] = [];
+  for (const p of raw as RawParticipant[]) {
+    const pp = p as Record<string, any>;
+    if (pp.role !== "REVIEWER") continue;
+    const account = toAuthor(pp.user);
+    if (!account) continue;
+    out.push({ account, state: toReviewState(pp.state) });
+  }
+  return out;
+}
+
+function toReviewState(raw: unknown): ReviewState {
+  if (raw === "approved") return "approved";
+  if (raw === "changes_requested") return "changes_requested";
+  return "pending";
 }
