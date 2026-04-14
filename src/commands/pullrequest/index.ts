@@ -1,0 +1,33 @@
+import type { Command } from "commander";
+import { withRenderer } from "../../shared/renderer/commander.ts";
+import { runPullRequestList } from "./list.ts";
+
+export function registerPullRequestCommands(program: Command): void {
+  const pr = program
+    .command("pullrequest")
+    .alias("pr")
+    .description("Work with Bitbucket pull requests");
+
+  pr
+    .command("list")
+    .description("List pull requests in a repository")
+    .option(
+      "-R, --repository <workspace/repo>",
+      "Override repository detection",
+    )
+    .option(
+      "-s, --state <state>",
+      "Filter by state: open, merged, declined, all",
+      "open",
+    )
+    .option(
+      "-a, --author <user>",
+      "Filter by author (nickname, or @me)",
+    )
+    .option(
+      "-r, --reviewer <user>",
+      "Filter by reviewer (nickname, or @me)",
+    )
+    .option("-L, --limit <n>", "Maximum results", "30")
+    .action(withRenderer(runPullRequestList));
+}

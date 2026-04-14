@@ -5,6 +5,7 @@ import { runWorkspaceList } from "./list.ts";
 export function registerWorkspaceCommands(program: Command): void {
   const workspace = program
     .command("workspace")
+    .alias("ws")
     .description("Manage Bitbucket workspaces");
 
   workspace

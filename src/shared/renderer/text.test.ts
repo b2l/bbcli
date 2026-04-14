@@ -1,12 +1,13 @@
 import { test, expect, describe } from "bun:test";
 import { createTextRenderer } from "./text.ts";
 
-function capture() {
+function capture(terminalWidth?: number) {
   const out: string[] = [];
   const err: string[] = [];
   const renderer = createTextRenderer({
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
+    terminalWidth,
   });
   return { renderer, out: () => out.join(""), err: () => err.join("") };
 }
@@ -69,6 +70,51 @@ describe("TextRenderer", () => {
       Email  : alice@example.com
       "
     `);
+  });
+
+  test("truncates flex column with … when terminal width is exceeded", () => {
+    const c = capture(40);
+    c.renderer.list(
+      [
+        { id: 1, title: "this title is way too long to fit on one line" },
+        { id: 2, title: "short" },
+      ],
+      [
+        { header: "ID", value: (r) => String(r.id) },
+        { header: "TITLE", value: (r) => r.title, flex: true },
+      ],
+    );
+    const lines = strip(c.out()).trimEnd().split("\n");
+    // every rendered row must fit within the requested terminal width
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(40);
+    }
+    // …and the long title got truncated with the ellipsis cli-table3 uses
+    expect(lines.some((l) => l.includes("…"))).toBe(true);
+  });
+
+  test("does not truncate when terminal width is unknown (piped output)", () => {
+    const c = capture(undefined);
+    c.renderer.list(
+      [{ title: "this is a fairly long title that should not be truncated" }],
+      [{ header: "TITLE", value: (r) => r.title, flex: true }],
+    );
+    expect(strip(c.out())).toContain(
+      "this is a fairly long title that should not be truncated",
+    );
+  });
+
+  test("does not truncate when no column is marked flex", () => {
+    const c = capture(20);
+    c.renderer.list(
+      [{ a: "aaaaaaaaaaaa", b: "bbbbbbbbbbbb" }],
+      [
+        { header: "A", value: (r) => r.a },
+        { header: "B", value: (r) => r.b },
+      ],
+    );
+    expect(strip(c.out())).toContain("aaaaaaaaaaaa");
+    expect(strip(c.out())).toContain("bbbbbbbbbbbb");
   });
 
   test("applies per-column style without corrupting text", () => {
