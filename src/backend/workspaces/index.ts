@@ -29,7 +29,7 @@ export async function listWorkspaces(
   const client = createBitbucketClient(credentials, fetchImpl);
 
   const { data, response } = await client.GET("/user/workspaces", {
-    params: { query: { pagelen: 100 } as any },
+    params: { query: { pagelen: 100 } },
   });
 
   if (!response.ok || !data) {

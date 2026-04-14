@@ -1,6 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit by hand.
  * Source: https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json
+ * Local overlay: scripts/openapi-overlay.ts
  * Regenerate with: bun run generate:api
  */
 export interface paths {
@@ -9994,8 +9995,16 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description Only return pull requests that are in this state. This parameter can be repeated. */
-                    state?: "OPEN" | "MERGED" | "DECLINED" | "SUPERSEDED";
+                    /** @description Only return pull requests in these states. Repeat the param to combine. */
+                    state?: ("OPEN" | "MERGED" | "DECLINED" | "SUPERSEDED")[];
+                    /** @description Page number (1-based) for paginated results. */
+                    page?: number;
+                    /** @description Number of items per page. Default 10; maximum varies per endpoint (typically 50 or 100). */
+                    pagelen?: number;
+                    /** @description BBQL filter expression. See https://developer.atlassian.com/cloud/bitbucket/rest/intro/#filtering */
+                    q?: string;
+                    /** @description Field to sort by. Prefix with '-' for descending. See https://developer.atlassian.com/cloud/bitbucket/rest/intro/#sorting */
+                    sort?: string;
                 };
                 header?: never;
                 path: {
@@ -17489,6 +17498,12 @@ export interface paths {
                     sort?: string;
                     /** @description Filter workspaces based on which ones the caller has admin permissions or not. */
                     administrator?: boolean;
+                    /** @description Page number (1-based) for paginated results. */
+                    page?: number;
+                    /** @description Number of items per page. Default 10; maximum varies per endpoint (typically 50 or 100). */
+                    pagelen?: number;
+                    /** @description BBQL filter expression. See https://developer.atlassian.com/cloud/bitbucket/rest/intro/#filtering */
+                    q?: string;
                 };
                 header?: never;
                 path?: never;
