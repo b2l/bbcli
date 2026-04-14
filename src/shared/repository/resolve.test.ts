@@ -9,6 +9,7 @@ type Setup = {
   insideWorkTree?: boolean;
   remotes?: string[];
   remoteUrls?: Record<string, string>;
+  currentBranch?: string;
 };
 
 function fakeGit(s: Setup = {}): GitRunner {
@@ -21,6 +22,9 @@ function fakeGit(s: Setup = {}): GitRunner {
     },
     async getRemoteUrl(_cwd, name) {
       return s.remoteUrls?.[name];
+    },
+    async getCurrentBranch() {
+      return s.currentBranch;
     },
   };
 }
@@ -58,6 +62,10 @@ describe("resolveRepository — override", () => {
         return [];
       },
       async getRemoteUrl() {
+        called = true;
+        return undefined;
+      },
+      async getCurrentBranch() {
         called = true;
         return undefined;
       },

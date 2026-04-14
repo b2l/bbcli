@@ -1,8 +1,11 @@
 import { test, expect, describe } from "bun:test";
 import {
+  findOpenPullRequestForBranch,
+  getPullRequest,
   listPullRequests,
   PullRequestError,
   type PullRequest,
+  type PullRequestDetail,
 } from "./index.ts";
 
 type Call = { pathname: string; searchParams: URLSearchParams };
@@ -368,4 +371,147 @@ describe("listPullRequests", () => {
     expect((err as PullRequestError).status).toBe(404);
   });
 
+});
+
+function makePrDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 42,
+    title: "Rework auth",
+    state: "OPEN",
+    author: { uuid: "{alice}", display_name: "Alice", nickname: "alice" },
+    created_on: "2026-04-10T00:00:00Z",
+    updated_on: "2026-04-13T00:00:00Z",
+    summary: { raw: "A detailed PR description.\n\n- fix thing\n- fix other thing" },
+    source: { branch: { name: "feature/auth" } },
+    destination: { branch: { name: "main" } },
+    links: { html: { href: "https://bitbucket.org/ws/repo/pull-requests/42" } },
+    participants: [
+      {
+        role: "REVIEWER",
+        user: { uuid: "{bob}", display_name: "Bob", nickname: "bob" },
+        state: "approved",
+      },
+      {
+        role: "REVIEWER",
+        user: { uuid: "{carol}", display_name: "Carol", nickname: "carol" },
+        state: "changes_requested",
+      },
+      {
+        role: "REVIEWER",
+        user: { uuid: "{dave}", display_name: "Dave", nickname: "dave" },
+        state: null,
+      },
+      // non-reviewer participants (plain commenters) should be dropped
+      {
+        role: "PARTICIPANT",
+        user: { uuid: "{eve}", display_name: "Eve", nickname: "eve" },
+        state: null,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+describe("getPullRequest", () => {
+  test("fetches and maps a single PR to PullRequestDetail", async () => {
+    const { fetch, calls } = mockFetch(() => ({
+      status: 200,
+      body: makePrDetail(),
+    }));
+
+    const result = await getPullRequest(creds, ref, 42, fetch);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.pathname).toBe("/repositories/ws/repo/pullrequests/42");
+
+    expect(result).toEqual<PullRequestDetail>({
+      id: 42,
+      title: "Rework auth",
+      state: "OPEN",
+      author: { uuid: "{alice}", displayName: "Alice", nickname: "alice" },
+      createdOn: "2026-04-10T00:00:00Z",
+      updatedOn: "2026-04-13T00:00:00Z",
+      url: "https://bitbucket.org/ws/repo/pull-requests/42",
+      description: "A detailed PR description.\n\n- fix thing\n- fix other thing",
+      sourceBranch: "feature/auth",
+      destinationBranch: "main",
+      reviewers: [
+        {
+          account: { uuid: "{bob}", displayName: "Bob", nickname: "bob" },
+          state: "approved",
+        },
+        {
+          account: { uuid: "{carol}", displayName: "Carol", nickname: "carol" },
+          state: "changes_requested",
+        },
+        {
+          account: { uuid: "{dave}", displayName: "Dave", nickname: "dave" },
+          state: "pending",
+        },
+      ],
+    });
+  });
+
+  test("throws PullRequestError on 404", async () => {
+    const { fetch } = mockFetch(() => ({ status: 404, body: { type: "error" } }));
+    const err = await getPullRequest(creds, ref, 99, fetch).catch((e) => e);
+    expect(err).toBeInstanceOf(PullRequestError);
+    expect((err as PullRequestError).status).toBe(404);
+  });
+
+  test("handles a PR with no participants", async () => {
+    const { fetch } = mockFetch(() => ({
+      status: 200,
+      body: makePrDetail({ participants: undefined }),
+    }));
+    const result = await getPullRequest(creds, ref, 42, fetch);
+    expect(result.reviewers).toEqual([]);
+  });
+});
+
+describe("findOpenPullRequestForBranch", () => {
+  test("queries with BBQL filter on source branch and open state", async () => {
+    const { fetch, calls } = mockFetch(() => ({
+      status: 200,
+      body: { values: [makePrDetail({ id: 7 })] },
+    }));
+
+    const result = await findOpenPullRequestForBranch(
+      creds,
+      ref,
+      "feature/auth",
+      fetch,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.searchParams.get("q")).toBe(
+      'state="OPEN" AND source.branch.name="feature/auth"',
+    );
+    expect(calls[0]!.searchParams.get("pagelen")).toBe("1");
+    expect(result?.id).toBe(7);
+  });
+
+  test("returns null when no open PR matches", async () => {
+    const { fetch } = mockFetch(() => ({ status: 200, body: { values: [] } }));
+    const result = await findOpenPullRequestForBranch(
+      creds,
+      ref,
+      "feature/auth",
+      fetch,
+    );
+    expect(result).toBeNull();
+  });
+
+  test("escapes quotes in branch names", async () => {
+    const { fetch, calls } = mockFetch(() => ({ status: 200, body: { values: [] } }));
+    await findOpenPullRequestForBranch(
+      creds,
+      ref,
+      'weird"branch',
+      fetch,
+    );
+    expect(calls[0]!.searchParams.get("q")).toBe(
+      'state="OPEN" AND source.branch.name="weird\\"branch"',
+    );
+  });
 });

@@ -55,6 +55,32 @@ describe("defaultGitRunner", () => {
     );
     expect(await defaultGitRunner.getRemoteUrl(repoDir, "nope")).toBeUndefined();
   });
+
+  test("returns current branch name", async () => {
+    // The repo was init'd with `-b main`; HEAD points at `main` even with no
+    // commits yet (symbolic-ref reads HEAD without requiring the branch to
+    // exist as a ref).
+    expect(await defaultGitRunner.getCurrentBranch(repoDir)).toBe("main");
+  });
+
+  test("returns undefined on detached HEAD", async () => {
+    // Create a commit and a second branch, then detach HEAD by checking out
+    // the commit hash. symbolic-ref exits non-zero in that state.
+    await $`git -C ${repoDir} commit --allow-empty -m init`.quiet();
+    const sha = (
+      await $`git -C ${repoDir} rev-parse HEAD`.quiet()
+    ).stdout.toString().trim();
+    await $`git -C ${repoDir} checkout --detach ${sha}`.quiet();
+    try {
+      expect(await defaultGitRunner.getCurrentBranch(repoDir)).toBeUndefined();
+    } finally {
+      await $`git -C ${repoDir} checkout main`.quiet();
+    }
+  });
+
+  test("returns undefined outside a git repo", async () => {
+    expect(await defaultGitRunner.getCurrentBranch(nonRepoDir)).toBeUndefined();
+  });
 });
 
 describe("resolveRepository with real git", () => {
