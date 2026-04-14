@@ -83,6 +83,79 @@ describe("defaultGitRunner", () => {
   });
 });
 
+describe("defaultGitRunner against a local bare remote", () => {
+  // We set up a separate clone with a real (local-filesystem) remote so
+  // `ls-remote` actually talks to something. The shared `repoDir` above
+  // has `origin` pointing at a bogus bitbucket URL — useful for URL-parse
+  // tests but unusable for network-reaching operations.
+
+  let bareDir: string;
+  let cloneDir: string;
+  let initialSha: string;
+
+  beforeAll(async () => {
+    const root = await mkdtemp(join(tmpdir(), "bbcli-bareremote-test-"));
+    bareDir = join(root, "origin.git");
+    cloneDir = join(root, "clone");
+
+    await $`git init --bare -q -b main ${bareDir}`.quiet();
+
+    // Seed the bare remote with a single commit on main, then clone it.
+    const seedDir = join(root, "seed");
+    await $`git init -q -b main ${seedDir}`.quiet();
+    await $`git -C ${seedDir} -c user.email=t@b.co -c user.name=Test commit --allow-empty -m initial`.quiet();
+    await $`git -C ${seedDir} push -q ${bareDir} main`.quiet();
+
+    await $`git clone -q ${bareDir} ${cloneDir}`.quiet();
+
+    initialSha = (
+      await $`git -C ${cloneDir} rev-parse HEAD`.quiet()
+    ).stdout.toString().trim();
+  });
+
+  afterAll(async () => {
+    if (bareDir) {
+      await rm(join(bareDir, ".."), { recursive: true, force: true });
+    }
+  });
+
+  test("getSha resolves HEAD", async () => {
+    expect(await defaultGitRunner.getSha(cloneDir, "HEAD")).toBe(initialSha);
+  });
+
+  test("getSha returns undefined for an unknown rev", async () => {
+    expect(await defaultGitRunner.getSha(cloneDir, "does-not-exist"))
+      .toBeUndefined();
+  });
+
+  test("getRemoteBranchSha returns the remote sha for an existing branch", async () => {
+    const sha = await defaultGitRunner.getRemoteBranchSha(cloneDir, "origin", "main");
+    expect(sha).toBe(initialSha);
+  });
+
+  test("getRemoteBranchSha returns undefined for a branch that isn't on the remote", async () => {
+    const sha = await defaultGitRunner.getRemoteBranchSha(
+      cloneDir,
+      "origin",
+      "never-pushed",
+    );
+    expect(sha).toBeUndefined();
+  });
+
+  test("getDefaultBranchFromRemote returns the default branch after clone", async () => {
+    expect(await defaultGitRunner.getDefaultBranchFromRemote(cloneDir, "origin"))
+      .toBe("main");
+  });
+
+  test("getDefaultBranchFromRemote returns undefined when the symbolic ref is missing", async () => {
+    // A fresh `init`'d repo with a remote added by hand won't have
+    // refs/remotes/<remote>/HEAD set; it's only populated by `clone`.
+    // Reuse the main shared repoDir which was set up that way.
+    expect(await defaultGitRunner.getDefaultBranchFromRemote(repoDir, "origin"))
+      .toBeUndefined();
+  });
+});
+
 describe("resolveRepository with real git", () => {
   test("resolves origin from a real repo", async () => {
     const ref = await resolveRepository({ cwd: repoDir });

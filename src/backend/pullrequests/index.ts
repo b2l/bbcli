@@ -187,6 +187,51 @@ function escapeBbql(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+export type CreatePullRequestInput = {
+  title: string;
+  description: string;
+  sourceBranch: string;
+  destinationBranch: string;
+};
+
+/**
+ * POSTs a new pull request to Bitbucket. The source repo is implied by the
+ * path (we only create PRs in the current repo, never from forks at this
+ * stage). Reviewers are omitted: our Bitbucket workspaces auto-assign
+ * reviewers based on code-owner settings.
+ */
+export async function createPullRequest(
+  credentials: Credentials,
+  ref: { workspace: string; slug: string },
+  input: CreatePullRequestInput,
+): Promise<PullRequestDetail> {
+  const client = createBitbucketClient(credentials);
+  const { data, response } = await client.POST(
+    "/repositories/{workspace}/{repo_slug}/pullrequests",
+    {
+      params: {
+        path: { workspace: ref.workspace, repo_slug: ref.slug },
+      },
+      body: {
+        type: "pullrequest",
+        title: input.title,
+        description: input.description,
+        source: { branch: { name: input.sourceBranch } },
+        destination: { branch: { name: input.destinationBranch } },
+      },
+    },
+  );
+
+  if (!response.ok || !data) {
+    throw new PullRequestError(
+      `Failed to create pull request: HTTP ${response.status}.`,
+      response.status,
+    );
+  }
+
+  return toPullRequestDetail(data as RawPullRequest);
+}
+
 /**
  * Fetches a single pull request by id. Single typed call — the overlay
  * (BBC2-38) gives us typed path params and response shape, so we stay on
