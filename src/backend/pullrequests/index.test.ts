@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { http, HttpResponse } from "msw";
 import {
+  createPullRequest,
   findOpenPullRequestForBranch,
   getPullRequest,
   listPullRequests,
@@ -458,5 +459,58 @@ describe("findOpenPullRequestForBranch", () => {
     expect(calls[0]!.get("q")).toBe(
       'state="OPEN" AND source.branch.name="weird\\"branch"',
     );
+  });
+});
+
+describe("createPullRequest", () => {
+  test("POSTs title, description, and source/destination branches", async () => {
+    let seenBody: Record<string, any> | null = null;
+    server.use(
+      http.post(PR_LIST_PATH, async ({ request }) => {
+        seenBody = (await request.json()) as Record<string, any>;
+        return HttpResponse.json(
+          makePrDetail({ id: 100, title: "Add login" }),
+          { status: 201 },
+        );
+      }),
+    );
+
+    const result = await createPullRequest(creds, ref, {
+      title: "Add login",
+      description: "Wires up auth middleware.",
+      sourceBranch: "feature/login",
+      destinationBranch: "main",
+    });
+
+    expect(seenBody!).toEqual({
+      type: "pullrequest",
+      title: "Add login",
+      description: "Wires up auth middleware.",
+      source: { branch: { name: "feature/login" } },
+      destination: { branch: { name: "main" } },
+    });
+    expect(result.id).toBe(100);
+    expect(result.title).toBe("Add login");
+  });
+
+  test("throws PullRequestError on 400 (validation failure)", async () => {
+    server.use(
+      http.post(PR_LIST_PATH, () =>
+        HttpResponse.json(
+          { type: "error", error: { message: "Invalid source branch" } },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const err = await createPullRequest(creds, ref, {
+      title: "x",
+      description: "",
+      sourceBranch: "nope",
+      destinationBranch: "main",
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(PullRequestError);
+    expect((err as PullRequestError).status).toBe(400);
   });
 });

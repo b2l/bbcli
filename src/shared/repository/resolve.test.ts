@@ -26,6 +26,15 @@ function fakeGit(s: Setup = {}): GitRunner {
     async getCurrentBranch() {
       return s.currentBranch;
     },
+    async getSha() {
+      return undefined;
+    },
+    async getRemoteBranchSha() {
+      return undefined;
+    },
+    async getDefaultBranchFromRemote() {
+      return undefined;
+    },
   };
 }
 
@@ -66,6 +75,18 @@ describe("resolveRepository — override", () => {
         return undefined;
       },
       async getCurrentBranch() {
+        called = true;
+        return undefined;
+      },
+      async getSha() {
+        called = true;
+        return undefined;
+      },
+      async getRemoteBranchSha() {
+        called = true;
+        return undefined;
+      },
+      async getDefaultBranchFromRemote() {
         called = true;
         return undefined;
       },

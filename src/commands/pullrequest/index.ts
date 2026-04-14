@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
+import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestList } from "./list.ts";
 import { runPullRequestView } from "./view.ts";
 
@@ -41,4 +42,23 @@ export function registerPullRequestCommands(program: Command): void {
       "Override repository detection",
     )
     .action(withRenderer(runPullRequestView));
+
+  pr
+    .command("create")
+    .description("Open a pull request from the current branch")
+    .option(
+      "-R, --repository <workspace/repo>",
+      "Override repository detection",
+    )
+    .option("-t, --title <title>", "Pull request title (required)")
+    .option("-b, --body <body>", "Pull request description")
+    .option(
+      "-F, --body-file <path>",
+      "Read description from a file ('-' for stdin support deferred)",
+    )
+    .option(
+      "--base <branch>",
+      "Destination branch (defaults to the remote's default branch)",
+    )
+    .action(withRenderer(runPullRequestCreate));
 }
