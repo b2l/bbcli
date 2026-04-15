@@ -53,5 +53,6 @@ export function registerPullRequestCommands(program: Command): void {
 			"--base <branch>",
 			"Destination branch (defaults to the remote's default branch)",
 		)
+		.option("--draft", "Create as a draft pull request")
 		.action(withRenderer(runPullRequestCreate));
 }

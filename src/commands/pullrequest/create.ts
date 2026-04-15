@@ -17,6 +17,7 @@ export type PullRequestCreateOptions = {
 	body?: string;
 	bodyFile?: string;
 	base?: string;
+	draft?: boolean;
 };
 
 export async function runPullRequestCreate(
@@ -57,6 +58,7 @@ export async function runPullRequestCreate(
 			description: body,
 			sourceBranch: branch,
 			destinationBranch: destination,
+			draft: options.draft,
 		});
 
 		renderer.message(pr.url);
