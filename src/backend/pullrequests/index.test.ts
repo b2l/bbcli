@@ -3,6 +3,7 @@ import { HttpResponse, http } from "msw";
 import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 import {
 	createPullRequest,
+	createPullRequestComment,
 	findOpenPullRequestForBranch,
 	getPullRequest,
 	listPullRequests,
@@ -565,5 +566,75 @@ describe("createPullRequest", () => {
 
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(400);
+	});
+});
+
+describe("createPullRequestComment", () => {
+	const COMMENTS_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/comments`;
+
+	test("POSTs body and markup=markdown, returns id and html url", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(COMMENTS_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(
+					{
+						type: "pullrequest_comment",
+						id: 7,
+						content: {
+							raw: "hello",
+							markup: "markdown",
+							html: "<p>hello</p>",
+						},
+						links: {
+							html: {
+								href: "https://bitbucket.org/ws/repo/pull-requests/42/_#comment-7",
+							},
+						},
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+
+		const out = await createPullRequestComment(creds, ref, 42, "hello");
+
+		expect(seenBody!).toEqual({
+			type: "pullrequest_comment",
+			content: { raw: "hello", markup: "markdown" },
+		});
+		expect(out).toEqual({
+			id: 7,
+			url: "https://bitbucket.org/ws/repo/pull-requests/42/_#comment-7",
+		});
+	});
+
+	test("throws PullRequestError on 403", async () => {
+		server.use(
+			http.post(COMMENTS_PATH(42), () =>
+				HttpResponse.json({ type: "error" }, { status: 403 }),
+			),
+		);
+
+		const err = await createPullRequestComment(creds, ref, 42, "nope").catch(
+			(e) => e,
+		);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(403);
+	});
+
+	test("throws PullRequestError on 404", async () => {
+		server.use(
+			http.post(COMMENTS_PATH(99), () =>
+				HttpResponse.json({ type: "error" }, { status: 404 }),
+			),
+		);
+
+		const err = await createPullRequestComment(creds, ref, 99, "nope").catch(
+			(e) => e,
+		);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
 	});
 });

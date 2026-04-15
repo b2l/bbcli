@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
+import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestList } from "./list.ts";
 import { runPullRequestView } from "./view.ts";
@@ -55,4 +56,20 @@ export function registerPullRequestCommands(program: Command): void {
 		)
 		.option("--draft", "Create as a draft pull request")
 		.action(withRenderer(runPullRequestCreate));
+
+	pr.command("comment")
+		.description(
+			"Post a top-level comment on a pull request (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.option("-b, --body <body>", "Comment body (markdown)")
+		.option(
+			"-F, --body-file <path>",
+			"Read comment body from a file ('-' for stdin)",
+		)
+		.action(withRenderer(runPullRequestComment));
 }
