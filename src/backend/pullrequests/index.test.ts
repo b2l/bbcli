@@ -486,6 +486,66 @@ describe("createPullRequest", () => {
 		expect(result.title).toBe("Add login");
 	});
 
+	test("omits the draft field when draft option is absent", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 101 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "no draft",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+		});
+
+		expect(seenBody!).not.toHaveProperty("draft");
+	});
+
+	test("omits the draft field when draft is false", async () => {
+		// Explicit false should still be omitted — we rely on the server default.
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 102 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "explicit false",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+			draft: false,
+		});
+
+		expect(seenBody!).not.toHaveProperty("draft");
+	});
+
+	test("sends draft: true when draft option is set", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 103 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "draft PR",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+			draft: true,
+		});
+
+		expect(seenBody!.draft).toBe(true);
+	});
+
 	test("throws PullRequestError on 400 (validation failure)", async () => {
 		server.use(
 			http.post(PR_LIST_PATH, () =>

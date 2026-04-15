@@ -190,6 +190,7 @@ export type CreatePullRequestInput = {
 	description: string;
 	sourceBranch: string;
 	destinationBranch: string;
+	draft?: boolean;
 };
 
 /**
@@ -197,6 +198,9 @@ export type CreatePullRequestInput = {
  * path (we only create PRs in the current repo, never from forks at this
  * stage). Reviewers are omitted: our Bitbucket workspaces auto-assign
  * reviewers based on code-owner settings.
+ *
+ * `draft: true` is only included in the body when explicitly set; we never
+ * send `draft: false` so the server's default applies.
  */
 export async function createPullRequest(
 	credentials: Credentials,
@@ -216,6 +220,7 @@ export async function createPullRequest(
 				description: input.description,
 				source: { branch: { name: input.sourceBranch } },
 				destination: { branch: { name: input.destinationBranch } },
+				...(input.draft ? { draft: true } : {}),
 			},
 		},
 	);
