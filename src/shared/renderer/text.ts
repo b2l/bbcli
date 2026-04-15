@@ -76,6 +76,8 @@ export function createTextRenderer(
 	streams: Streams = defaultStreams,
 ): Renderer {
 	return {
+		json: false,
+
 		message(text) {
 			streams.stdout(`${text}\n`);
 		},

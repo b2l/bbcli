@@ -20,6 +20,9 @@ export type Field<T> = {
 };
 
 export interface Renderer {
+	/** True when output is being produced in JSON mode (vs text). Lets commands
+	 * whose natural output is a raw blob (e.g. a diff) branch explicitly. */
+	readonly json: boolean;
 	/** Info output. Stdout in text mode, suppressed in JSON mode. */
 	message(text: string): void;
 	/** Errors. Always stderr, plain text regardless of mode. */

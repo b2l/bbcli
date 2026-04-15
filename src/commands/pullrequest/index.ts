@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
 import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
+import { runPullRequestDiff } from "./diff.ts";
 import { runPullRequestList } from "./list.ts";
 import { runPullRequestReview } from "./review.ts";
 import { runPullRequestView } from "./view.ts";
@@ -73,6 +74,17 @@ export function registerPullRequestCommands(program: Command): void {
 			"Read comment body from a file ('-' for stdin)",
 		)
 		.action(withRenderer(runPullRequestComment));
+
+	pr.command("diff")
+		.description(
+			"Print the unified diff of a pull request (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.action(withRenderer(runPullRequestDiff));
 
 	pr.command("review")
 		.description(

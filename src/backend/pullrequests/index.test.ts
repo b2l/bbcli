@@ -7,6 +7,7 @@ import {
 	createPullRequestComment,
 	findOpenPullRequestForBranch,
 	getPullRequest,
+	getPullRequestDiff,
 	listEffectiveDefaultReviewers,
 	listPullRequests,
 	type PullRequest,
@@ -915,6 +916,45 @@ describe("review action endpoints (approve / unapprove / request-changes / unreq
 		);
 
 		const err = await approvePullRequest(creds, ref, 99).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("getPullRequestDiff", () => {
+	const DIFF_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/diff`;
+
+	test("returns the raw text/plain body the server sent back", async () => {
+		const diffText =
+			"diff --git a/foo.ts b/foo.ts\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1 +1 @@\n-old\n+new\n";
+		server.use(
+			http.get(DIFF_PATH(42), () =>
+				HttpResponse.text(diffText, {
+					headers: { "content-type": "text/plain" },
+				}),
+			),
+		);
+
+		const out = await getPullRequestDiff(creds, ref, 42);
+		expect(out).toBe(diffText);
+	});
+
+	test("empty PR diffs come back as empty string", async () => {
+		server.use(http.get(DIFF_PATH(42), () => HttpResponse.text("")));
+
+		const out = await getPullRequestDiff(creds, ref, 42);
+		expect(out).toBe("");
+	});
+
+	test("throws PullRequestError on 404", async () => {
+		server.use(
+			http.get(DIFF_PATH(99), () =>
+				HttpResponse.text("not found", { status: 404 }),
+			),
+		);
+
+		const err = await getPullRequestDiff(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
 	});
