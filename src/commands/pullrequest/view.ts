@@ -74,6 +74,11 @@ function render(renderer: Renderer, pr: PullRequestDetail): void {
 			value: (p) => `${p.sourceBranch} → ${p.destinationBranch}`,
 		},
 		{
+			label: "APPROVALS",
+			value: (p) => summarizeReview(p),
+			style: "muted",
+		},
+		{
 			label: "CREATED",
 			value: (p) => formatRelativeTime(p.createdOn),
 			style: "muted",
@@ -102,4 +107,22 @@ function render(renderer: Renderer, pr: PullRequestDetail): void {
 			`  ${REVIEW_GLYPH[r.state]} ${name} (${REVIEW_LABEL[r.state]})`,
 		);
 	}
+}
+
+/**
+ * One-line approval summary covering both formal reviewers and ad-hoc
+ * participants (e.g. someone who approves a Snyk PR that has no reviewers).
+ * This is the minimum needed to confirm "my approval landed" without the
+ * full reviewers-vs-participants section split — that redesign is its own
+ * ticket.
+ */
+function summarizeReview(pr: PullRequestDetail): string {
+	const all = [...pr.reviewers, ...pr.participants];
+	const approved = all.filter((p) => p.state === "approved").length;
+	const changes = all.filter((p) => p.state === "changes_requested").length;
+	if (approved === 0 && changes === 0) return "(none)";
+	const parts: string[] = [];
+	if (approved > 0) parts.push(`${approved} approved`);
+	if (changes > 0) parts.push(`${changes} changes requested`);
+	return parts.join(", ");
 }

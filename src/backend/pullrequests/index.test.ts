@@ -73,7 +73,8 @@ function makePrDetail(
 				user: { uuid: "{dave}", display_name: "Dave", nickname: "dave" },
 				state: null,
 			},
-			// non-reviewer participants (plain commenters) should be dropped
+			// PARTICIPANT with no review state (plain commenter) — surfaces
+			// in participants[] with state=pending, stays out of reviewers[]
 			{
 				role: "PARTICIPANT",
 				user: { uuid: "{eve}", display_name: "Eve", nickname: "eve" },
@@ -392,6 +393,12 @@ describe("getPullRequest", () => {
 					state: "pending",
 				},
 			],
+			participants: [
+				{
+					account: { uuid: "{eve}", displayName: "Eve", nickname: "eve" },
+					state: "pending",
+				},
+			],
 		});
 	});
 
@@ -416,6 +423,46 @@ describe("getPullRequest", () => {
 
 		const result = await getPullRequest(creds, ref, 42);
 		expect(result.reviewers).toEqual([]);
+		expect(result.participants).toEqual([]);
+	});
+
+	test("surfaces ad-hoc approvers as participants (Snyk-style no-reviewer PR)", async () => {
+		// Snyk auto-PRs ship with no formal reviewers. When someone approves
+		// one, Bitbucket records them as role=PARTICIPANT with state=approved.
+		// We want that surfaced so the approver can see their own action
+		// landed.
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						participants: [
+							{
+								role: "PARTICIPANT",
+								user: {
+									uuid: "{nico}",
+									display_name: "Nicolas",
+									nickname: "nicolas",
+								},
+								state: "approved",
+							},
+						],
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.reviewers).toEqual([]);
+		expect(result.participants).toEqual([
+			{
+				account: {
+					uuid: "{nico}",
+					displayName: "Nicolas",
+					nickname: "nicolas",
+				},
+				state: "approved",
+			},
+		]);
 	});
 });
 

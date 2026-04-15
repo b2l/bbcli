@@ -48,11 +48,23 @@ export type Reviewer = {
 	state: ReviewState;
 };
 
+/**
+ * A non-reviewer participant on a PR. State is populated when the person
+ * has approved or requested changes without being on the formal reviewer
+ * list (e.g. someone approving a Snyk auto-PR with no assigned reviewers).
+ * Pure commenters appear with state="pending".
+ */
+export type Participant = {
+	account: PullRequestAuthor;
+	state: ReviewState;
+};
+
 export type PullRequestDetail = PullRequest & {
 	description: string;
 	sourceBranch: string;
 	destinationBranch: string;
 	reviewers: Reviewer[];
+	participants: Participant[];
 };
 
 export type ListPullRequestsOptions = {
@@ -567,6 +579,7 @@ function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 		sourceBranch: String(raw.source?.branch?.name ?? ""),
 		destinationBranch: String(raw.destination?.branch?.name ?? ""),
 		reviewers: toReviewers(raw.participants),
+		participants: toParticipants(raw.participants),
 	};
 }
 
@@ -576,6 +589,19 @@ function toReviewers(raw: unknown): Reviewer[] {
 	for (const p of raw as RawParticipant[]) {
 		const pp = p as Record<string, any>;
 		if (pp.role !== "REVIEWER") continue;
+		const account = toAuthor(pp.user);
+		if (!account) continue;
+		out.push({ account, state: toReviewState(pp.state) });
+	}
+	return out;
+}
+
+function toParticipants(raw: unknown): Participant[] {
+	if (!Array.isArray(raw)) return [];
+	const out: Participant[] = [];
+	for (const p of raw as RawParticipant[]) {
+		const pp = p as Record<string, any>;
+		if (pp.role !== "PARTICIPANT") continue;
 		const account = toAuthor(pp.user);
 		if (!account) continue;
 		out.push({ account, state: toReviewState(pp.state) });
