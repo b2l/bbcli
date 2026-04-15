@@ -308,6 +308,55 @@ export async function findOpenPullRequestForBranch(
 	return first ? toPullRequest(first as RawPullRequest) : null;
 }
 
+export type PullRequestCommentResult = {
+	id: number;
+	url: string;
+};
+
+/**
+ * Posts a top-level comment on a pull request. `markup: "markdown"` is
+ * explicit — the web UI defaults to it but the API's server-side default
+ * isn't documented, so we send it to be safe. If a later smoke-test shows
+ * the server already defaults to markdown we can drop the field.
+ */
+export async function createPullRequestComment(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+	body: string,
+): Promise<PullRequestCommentResult> {
+	const client = createBitbucketClient(credentials);
+	const { data, response } = await client.POST(
+		"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/comments",
+		{
+			params: {
+				path: {
+					workspace: ref.workspace,
+					repo_slug: ref.slug,
+					pull_request_id: pullRequestId,
+				},
+			},
+			body: {
+				type: "pullrequest_comment",
+				content: { raw: body, markup: "markdown" },
+			},
+		},
+	);
+
+	if (!response.ok || !data) {
+		throw new PullRequestError(
+			`Failed to post comment on pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	const raw = data as Record<string, any>;
+	return {
+		id: Number(raw.id ?? 0),
+		url: String(raw.links?.html?.href ?? ""),
+	};
+}
+
 function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 	const base = toPullRequest(pr);
 	const raw = pr as Record<string, any>;

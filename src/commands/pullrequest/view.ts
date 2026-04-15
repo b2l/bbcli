@@ -1,5 +1,4 @@
 import {
-	findOpenPullRequestForBranch,
 	getPullRequest,
 	type PullRequestDetail,
 	PullRequestError,
@@ -8,11 +7,11 @@ import {
 import { loadConfigOrExit } from "../../shared/config/index.ts";
 import type { Renderer } from "../../shared/renderer/index.ts";
 import {
-	defaultGitRunner,
 	RepositoryResolutionError,
 	resolveRepository,
 } from "../../shared/repository/index.ts";
 import { formatRelativeTime } from "../../shared/time/index.ts";
+import { resolveCurrentPullRequestId } from "./current.ts";
 
 export type PullRequestViewOptions = {
 	repository?: string;
@@ -37,36 +36,14 @@ export async function runPullRequestView(
 ): Promise<void> {
 	const config = await loadConfigOrExit(renderer);
 
-	let id: number | undefined;
-	if (idArg !== undefined) {
-		const parsed = parseId(idArg);
-		if (parsed === null) {
-			renderer.error(`Invalid PR id '${idArg}'. Expected a positive integer.`);
-			process.exit(1);
-		}
-		id = parsed;
-	}
-
 	try {
 		const ref = await resolveRepository({ override: options.repository });
-
-		if (id === undefined) {
-			const branch = await defaultGitRunner.getCurrentBranch(process.cwd());
-			if (!branch) {
-				renderer.error(
-					"Could not determine the current branch (detached HEAD or not a git repo). Pass a PR number explicitly: bb pr view <n>.",
-				);
-				process.exit(1);
-			}
-			const summary = await findOpenPullRequestForBranch(config, ref, branch);
-			if (!summary) {
-				renderer.error(
-					`No open pull request for branch '${branch}'. Pass a PR number explicitly (bb pr view <n>) or list available PRs (bb pr list).`,
-				);
-				process.exit(1);
-			}
-			id = summary.id;
-		}
+		const id = await resolveCurrentPullRequestId(idArg, {
+			renderer,
+			config,
+			ref,
+			commandName: "view",
+		});
 
 		const pr = await getPullRequest(config, ref, id);
 		render(renderer, pr);
@@ -125,10 +102,4 @@ function render(renderer: Renderer, pr: PullRequestDetail): void {
 			`  ${REVIEW_GLYPH[r.state]} ${name} (${REVIEW_LABEL[r.state]})`,
 		);
 	}
-}
-
-function parseId(raw: string): number | null {
-	const n = Number(raw);
-	if (!Number.isInteger(n) || n <= 0) return null;
-	return n;
 }

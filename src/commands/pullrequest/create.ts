@@ -3,7 +3,11 @@ import {
 	PullRequestError,
 } from "../../backend/pullrequests/index.ts";
 import { loadConfigOrExit } from "../../shared/config/index.ts";
-import { EditorError, openEditor } from "../../shared/editor/index.ts";
+import {
+	BodyInputError,
+	resolveBodyInput,
+} from "../../shared/editor/body-input.ts";
+import { EditorError } from "../../shared/editor/index.ts";
 import type { Renderer } from "../../shared/renderer/index.ts";
 import {
 	defaultGitRunner,
@@ -51,7 +55,10 @@ export async function runPullRequestCreate(
 
 		const destination = options.base ?? (await defaultBase(renderer, cwd));
 
-		const body = await resolveBody(renderer, options);
+		const body = await resolveBodyInput({
+			body: options.body,
+			bodyFile: options.bodyFile,
+		});
 
 		const pr = await createPullRequest(config, ref, {
 			title: options.title,
@@ -66,6 +73,7 @@ export async function runPullRequestCreate(
 		if (
 			err instanceof RepositoryResolutionError ||
 			err instanceof PullRequestError ||
+			err instanceof BodyInputError ||
 			err instanceof EditorError
 		) {
 			renderer.error(err.message);
@@ -112,21 +120,4 @@ async function defaultBase(renderer: Renderer, cwd: string): Promise<string> {
 		process.exit(1);
 	}
 	return branch;
-}
-
-async function resolveBody(
-	renderer: Renderer,
-	options: PullRequestCreateOptions,
-): Promise<string> {
-	if (options.body !== undefined) return options.body;
-	if (options.bodyFile !== undefined) {
-		const file = Bun.file(options.bodyFile);
-		if (!(await file.exists())) {
-			renderer.error(`--body-file '${options.bodyFile}' does not exist.`);
-			process.exit(1);
-		}
-		return await file.text();
-	}
-	// No flag: drop into the user's editor with a blank file.
-	return await openEditor();
 }
