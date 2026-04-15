@@ -1,7 +1,9 @@
 import {
 	createPullRequest,
+	listEffectiveDefaultReviewers,
 	PullRequestError,
 } from "../../backend/pullrequests/index.ts";
+import { getCurrentUser, UserError } from "../../backend/user/index.ts";
 import { loadConfigOrExit } from "../../shared/config/index.ts";
 import {
 	BodyInputError,
@@ -60,12 +62,27 @@ export async function runPullRequestCreate(
 			bodyFile: options.bodyFile,
 		});
 
+		// Bitbucket's POST /pullrequests does not honor the repo's default
+		// reviewers configuration. To match the web UI we read the effective
+		// list (repo + project-inherited) and inline the UUIDs in the POST,
+		// minus the authenticated user (Bitbucket rejects a body where the
+		// author is also a reviewer). Failures here MUST propagate — we never
+		// silently create a reviewerless PR; that's the bug we're fixing.
+		const [me, defaultReviewerUuids] = await Promise.all([
+			getCurrentUser(config),
+			listEffectiveDefaultReviewers(config, ref),
+		]);
+		const reviewerUuids = defaultReviewerUuids.filter(
+			(uuid) => uuid !== me.uuid,
+		);
+
 		const pr = await createPullRequest(config, ref, {
 			title: options.title,
 			description: body,
 			sourceBranch: branch,
 			destinationBranch: destination,
 			draft: options.draft,
+			reviewerUuids,
 		});
 
 		renderer.message(pr.url);
@@ -73,6 +90,7 @@ export async function runPullRequestCreate(
 		if (
 			err instanceof RepositoryResolutionError ||
 			err instanceof PullRequestError ||
+			err instanceof UserError ||
 			err instanceof BodyInputError ||
 			err instanceof EditorError
 		) {

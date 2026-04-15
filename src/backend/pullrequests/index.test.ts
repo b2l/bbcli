@@ -6,6 +6,7 @@ import {
 	createPullRequestComment,
 	findOpenPullRequestForBranch,
 	getPullRequest,
+	listEffectiveDefaultReviewers,
 	listPullRequests,
 	type PullRequest,
 	type PullRequestDetail,
@@ -547,6 +548,68 @@ describe("createPullRequest", () => {
 		expect(seenBody!.draft).toBe(true);
 	});
 
+	test("omits the reviewers field when reviewerUuids is undefined", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 110 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "no reviewers",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+		});
+
+		expect(seenBody!).not.toHaveProperty("reviewers");
+	});
+
+	test("omits the reviewers field when reviewerUuids is empty", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 111 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "empty reviewers",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+			reviewerUuids: [],
+		});
+
+		expect(seenBody!).not.toHaveProperty("reviewers");
+	});
+
+	test("sends reviewers as [{type:'account', uuid}] when reviewerUuids is non-empty", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(PR_LIST_PATH, async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 112 }), { status: 201 });
+			}),
+		);
+
+		await createPullRequest(creds, ref, {
+			title: "with reviewers",
+			description: "",
+			sourceBranch: "feature/x",
+			destinationBranch: "main",
+			reviewerUuids: ["{alice}", "{bob}"],
+		});
+
+		expect(seenBody!.reviewers).toEqual([
+			{ type: "account", uuid: "{alice}" },
+			{ type: "account", uuid: "{bob}" },
+		]);
+	});
+
 	test("throws PullRequestError on 400 (validation failure)", async () => {
 		server.use(
 			http.post(PR_LIST_PATH, () =>
@@ -566,6 +629,68 @@ describe("createPullRequest", () => {
 
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(400);
+	});
+});
+
+describe("listEffectiveDefaultReviewers", () => {
+	const PATH = `${BITBUCKET_BASE}/repositories/ws/repo/effective-default-reviewers`;
+
+	test("returns uuids in document order, skipping entries without one", async () => {
+		server.use(
+			http.get(PATH, () =>
+				HttpResponse.json({
+					values: [
+						{
+							type: "default_reviewer_and_type",
+							reviewer_type: "repository",
+							user: { uuid: "{alice}", nickname: "alice" },
+						},
+						{
+							type: "default_reviewer_and_type",
+							reviewer_type: "project",
+							user: { uuid: "{bob}", nickname: "bob" },
+						},
+						// pathological: missing user → skip silently
+						{ type: "default_reviewer_and_type", reviewer_type: "project" },
+						// pathological: empty uuid → skip silently
+						{
+							type: "default_reviewer_and_type",
+							reviewer_type: "project",
+							user: { uuid: "", nickname: "ghost" },
+						},
+					],
+				}),
+			),
+		);
+
+		const out = await listEffectiveDefaultReviewers(creds, ref);
+		expect(out).toEqual(["{alice}", "{bob}"]);
+	});
+
+	test("empty list when no defaults configured", async () => {
+		server.use(http.get(PATH, () => HttpResponse.json({ values: [] })));
+
+		const out = await listEffectiveDefaultReviewers(creds, ref);
+		expect(out).toEqual([]);
+	});
+
+	test("treats missing values array as empty", async () => {
+		server.use(http.get(PATH, () => HttpResponse.json({})));
+
+		const out = await listEffectiveDefaultReviewers(creds, ref);
+		expect(out).toEqual([]);
+	});
+
+	test("throws PullRequestError on 403", async () => {
+		server.use(
+			http.get(PATH, () =>
+				HttpResponse.json({ type: "error" }, { status: 403 }),
+			),
+		);
+
+		const err = await listEffectiveDefaultReviewers(creds, ref).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(403);
 	});
 });
 

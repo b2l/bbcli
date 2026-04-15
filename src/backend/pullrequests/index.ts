@@ -191,16 +191,24 @@ export type CreatePullRequestInput = {
 	sourceBranch: string;
 	destinationBranch: string;
 	draft?: boolean;
+	/**
+	 * UUIDs (curly-brace form) to send as reviewers. The caller is responsible
+	 * for resolving + filtering them (e.g. removing the author, deduping). We
+	 * pass them through verbatim.
+	 */
+	reviewerUuids?: string[];
 };
 
 /**
  * POSTs a new pull request to Bitbucket. The source repo is implied by the
  * path (we only create PRs in the current repo, never from forks at this
- * stage). Reviewers are omitted: our Bitbucket workspaces auto-assign
- * reviewers based on code-owner settings.
+ * stage).
  *
  * `draft: true` is only included in the body when explicitly set; we never
  * send `draft: false` so the server's default applies.
+ *
+ * `reviewers` is only included when `reviewerUuids` is non-empty — sending
+ * an empty array is legal but noisy.
  */
 export async function createPullRequest(
 	credentials: Credentials,
@@ -221,6 +229,14 @@ export async function createPullRequest(
 				source: { branch: { name: input.sourceBranch } },
 				destination: { branch: { name: input.destinationBranch } },
 				...(input.draft ? { draft: true } : {}),
+				...(input.reviewerUuids && input.reviewerUuids.length > 0
+					? {
+							reviewers: input.reviewerUuids.map((uuid) => ({
+								type: "account" as const,
+								uuid,
+							})),
+						}
+					: {}),
 			},
 		},
 	);
@@ -306,6 +322,52 @@ export async function findOpenPullRequestForBranch(
 
 	const first = data.values?.[0];
 	return first ? toPullRequest(first as RawPullRequest) : null;
+}
+
+/**
+ * Returns the UUIDs (curly-brace form) of the reviewers configured as defaults
+ * on the destination repo, including those inherited from the project. This
+ * matches what the Bitbucket UI shows under Repository settings → Default
+ * reviewers.
+ *
+ * Single page of pagelen=100 — real-world default-reviewer lists are tiny
+ * (<10). If anyone ever configures more we'll add pagination.
+ *
+ * Entries without a uuid are skipped silently. We surface a non-2xx as a
+ * PullRequestError; the caller MUST propagate it rather than silently
+ * creating a reviewerless PR.
+ */
+export async function listEffectiveDefaultReviewers(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+): Promise<string[]> {
+	const client = createBitbucketClient(credentials);
+	const { data, response } = await client.GET(
+		"/repositories/{workspace}/{repo_slug}/effective-default-reviewers",
+		{
+			params: {
+				path: { workspace: ref.workspace, repo_slug: ref.slug },
+			},
+		},
+	);
+
+	if (!response.ok || !data) {
+		throw new PullRequestError(
+			`Failed to fetch effective default reviewers: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	const values = (data as { values?: Array<{ user?: { uuid?: string } }> })
+		.values;
+	if (!values) return [];
+
+	const uuids: string[] = [];
+	for (const entry of values) {
+		const uuid = entry.user?.uuid;
+		if (typeof uuid === "string" && uuid.length > 0) uuids.push(uuid);
+	}
+	return uuids;
 }
 
 export type PullRequestCommentResult = {
