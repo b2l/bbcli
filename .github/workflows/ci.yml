@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronized, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - run: bun install --frozen-lockfile
+
+      # Typecheck before tests: `bun test` strips types and won't catch
+      # type errors on its own. Running tsc first short-circuits the job
+      # on type failures instead of wasting the test-run time.
+      - run: bunx tsc --noEmit
+
+      - run: bun test
