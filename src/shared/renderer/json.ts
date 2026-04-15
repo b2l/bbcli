@@ -19,6 +19,8 @@ export function createJsonRenderer(
 	streams: Streams = defaultStreams,
 ): Renderer {
 	return {
+		json: true,
+
 		message() {
 			// Info output is noise in a JSON pipeline — swallow it.
 		},

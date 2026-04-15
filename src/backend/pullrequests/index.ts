@@ -1,5 +1,7 @@
 import type { components } from "../../shared/bitbucket-http/generated";
 import {
+	BASE_URL,
+	basicAuthHeader,
 	type Credentials,
 	createBitbucketClient,
 } from "../../shared/bitbucket-http/index.ts";
@@ -380,6 +382,41 @@ export async function listEffectiveDefaultReviewers(
 		if (typeof uuid === "string" && uuid.length > 0) uuids.push(uuid);
 	}
 	return uuids;
+}
+
+/**
+ * Returns the raw unified-diff text for a PR. Bypasses the typed openapi-fetch
+ * client because `GET /pullrequests/{id}/diff` returns a 302 redirect to
+ * `/repositories/{ws}/{slug}/diff/{spec}` which serves `text/plain`, not JSON
+ * (see docs/bb-notes.md → PR diff). Content is returned as a string — the
+ * API's actual encoding is "whatever the files use" and we pass it through
+ * verbatim.
+ */
+export async function getPullRequestDiff(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<string> {
+	const url = `${BASE_URL}/repositories/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.slug)}/pullrequests/${pullRequestId}/diff`;
+	const response = await fetch(url, {
+		method: "GET",
+		headers: {
+			Authorization: basicAuthHeader(credentials),
+			// Don't request application/json — the target serves text/plain.
+			Accept: "text/plain",
+		},
+		// `fetch` follows the 302 automatically.
+		redirect: "follow",
+	});
+
+	if (!response.ok) {
+		throw new PullRequestError(
+			`Failed to fetch diff for pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	return await response.text();
 }
 
 export type PullRequestCommentResult = {
