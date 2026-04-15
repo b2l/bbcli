@@ -26,6 +26,10 @@ beforeAll(async () => {
   nonRepoDir = join(root, "plain");
   await $`mkdir -p ${repoDir} ${nestedDir} ${nonRepoDir}`.quiet();
   await $`git -C ${repoDir} init -q -b main`.quiet();
+  // Set identity locally on this test repo so `git commit` works on CI
+  // runners that don't have a global user.email/user.name configured.
+  await $`git -C ${repoDir} config user.email test@bbcli.local`.quiet();
+  await $`git -C ${repoDir} config user.name Test`.quiet();
   await $`git -C ${repoDir} remote add origin git@bitbucket.org:acme/widgets.git`.quiet();
   await $`git -C ${repoDir} remote add upstream https://bitbucket.org/other/widgets.git`.quiet();
 });
