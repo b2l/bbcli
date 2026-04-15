@@ -1,26 +1,32 @@
 {
-  "name": "bbcli",
-  "type": "module",
-  "private": true,
-  "bin": {
-    "bb": "./src/index.ts"
-  },
-  "scripts": {
-    "generate:api": "bun run scripts/generate-api.ts"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "msw": "^2.13.3",
-    "openapi-typescript": "^7.13.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "cli-table3": "^0.6.5",
-    "commander": "^14.0.3",
-    "openapi-fetch": "^0.17.0",
-    "picocolors": "^1.1.1",
-    "zod": "^4.3.6"
-  }
+	"name": "bbcli",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"bb": "./src/index.ts"
+	},
+	"scripts": {
+		"generate:api": "bun run scripts/generate-api.ts",
+		"format": "biome format --write .",
+		"lint": "biome check . && eslint src"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.12",
+		"@types/bun": "latest",
+		"@typescript-eslint/parser": "^8.58.2",
+		"eslint": "^10.2.0",
+		"eslint-plugin-boundaries": "^6.0.2",
+		"msw": "^2.13.3",
+		"openapi-typescript": "^7.13.0"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"cli-table3": "^0.6.5",
+		"commander": "^14.0.3",
+		"openapi-fetch": "^0.17.0",
+		"picocolors": "^1.1.1",
+		"zod": "^4.3.6"
+	}
 }

@@ -1,21 +1,21 @@
 import {
-  createBitbucketClient,
-  type Credentials,
+	type Credentials,
+	createBitbucketClient,
 } from "../../shared/bitbucket-http/index.ts";
 
 export type CurrentUser = {
-  uuid: string;
-  displayName: string;
+	uuid: string;
+	displayName: string;
 };
 
 export class UserError extends Error {
-  readonly status: number | undefined;
+	readonly status: number | undefined;
 
-  constructor(message: string, status?: number) {
-    super(message);
-    this.name = "UserError";
-    this.status = status;
-  }
+	constructor(message: string, status?: number) {
+		super(message);
+		this.name = "UserError";
+		this.status = status;
+	}
 }
 
 /**
@@ -23,21 +23,21 @@ export class UserError extends Error {
  * stable identifier (uuid) for BBQL queries.
  */
 export async function getCurrentUser(
-  credentials: Credentials,
+	credentials: Credentials,
 ): Promise<CurrentUser> {
-  const client = createBitbucketClient(credentials);
+	const client = createBitbucketClient(credentials);
 
-  const { data, response } = await client.GET("/user");
+	const { data, response } = await client.GET("/user");
 
-  if (!response.ok || !data || !data.uuid) {
-    throw new UserError(
-      `Failed to fetch current user: HTTP ${response.status}.`,
-      response.status,
-    );
-  }
+	if (!response.ok || !data?.uuid) {
+		throw new UserError(
+			`Failed to fetch current user: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
 
-  return {
-    uuid: data.uuid,
-    displayName: data.display_name ?? "",
-  };
+	return {
+		uuid: data.uuid,
+		displayName: data.display_name ?? "",
+	};
 }

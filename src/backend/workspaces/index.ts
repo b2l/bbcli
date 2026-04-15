@@ -1,21 +1,21 @@
 import {
-  createBitbucketClient,
-  type Credentials,
+	type Credentials,
+	createBitbucketClient,
 } from "../../shared/bitbucket-http/index.ts";
 
 export type WorkspaceInfo = {
-  slug: string;
-  administrator: boolean;
+	slug: string;
+	administrator: boolean;
 };
 
 export class WorkspaceError extends Error {
-  readonly status: number | undefined;
+	readonly status: number | undefined;
 
-  constructor(message: string, status?: number) {
-    super(message);
-    this.name = "WorkspaceError";
-    this.status = status;
-  }
+	constructor(message: string, status?: number) {
+		super(message);
+		this.name = "WorkspaceError";
+		this.status = status;
+	}
 }
 
 /**
@@ -23,23 +23,25 @@ export class WorkspaceError extends Error {
  * Fetches a single page of up to 100 results (the Bitbucket API max).
  */
 export async function listWorkspaces(
-  credentials: Credentials,
+	credentials: Credentials,
 ): Promise<WorkspaceInfo[]> {
-  const client = createBitbucketClient(credentials);
+	const client = createBitbucketClient(credentials);
 
-  const { data, response } = await client.GET("/user/workspaces", {
-    params: { query: { pagelen: 100 } },
-  });
+	const { data, response } = await client.GET("/user/workspaces", {
+		params: { query: { pagelen: 100 } },
+	});
 
-  if (!response.ok || !data) {
-    throw new WorkspaceError(
-      `Failed to list workspaces: HTTP ${response.status}.`,
-      response.status,
-    );
-  }
+	if (!response.ok || !data) {
+		throw new WorkspaceError(
+			`Failed to list workspaces: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
 
-  return data.values?.map(value => ({
-    slug: value.workspace?.slug ?? "",
-    administrator: value.administrator ?? false,
-  })) ?? []
+	return (
+		data.values?.map((value) => ({
+			slug: value.workspace?.slug ?? "",
+			administrator: value.administrator ?? false,
+		})) ?? []
+	);
 }

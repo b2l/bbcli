@@ -4,8 +4,8 @@ import type { paths } from "./generated";
 export type BitbucketClient = Client<paths>;
 
 export type Credentials = {
-  email: string;
-  token: string;
+	email: string;
+	token: string;
 };
 
 export const BASE_URL = "https://api.bitbucket.org/2.0";
@@ -16,7 +16,7 @@ export const BASE_URL = "https://api.bitbucket.org/2.0";
  * follow opaque `next` URLs) can attach the same auth.
  */
 export function basicAuthHeader(credentials: Credentials): string {
-  return `Basic ${btoa(`${credentials.email}:${credentials.token}`)}`;
+	return `Basic ${btoa(`${credentials.email}:${credentials.token}`)}`;
 }
 
 /**
@@ -24,13 +24,13 @@ export function basicAuthHeader(credentials: Credentials): string {
  * Tests intercept the global `fetch` via msw; no injection seam needed.
  */
 export function createBitbucketClient(
-  credentials: Credentials,
+	credentials: Credentials,
 ): BitbucketClient {
-  return createClient<paths>({
-    baseUrl: BASE_URL,
-    headers: {
-      Authorization: basicAuthHeader(credentials),
-      Accept: "application/json",
-    },
-  });
+	return createClient<paths>({
+		baseUrl: BASE_URL,
+		headers: {
+			Authorization: basicAuthHeader(credentials),
+			Accept: "application/json",
+		},
+	});
 }

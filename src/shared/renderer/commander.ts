@@ -7,8 +7,8 @@ import type { Renderer } from "./types.ts";
  * `--json` flag.
  */
 export function rendererFrom(cmd: Command): Renderer {
-  const json = Boolean(cmd.optsWithGlobals().json);
-  return createRenderer({ json });
+	const json = Boolean(cmd.optsWithGlobals().json);
+	return createRenderer({ json });
 }
 
 /**
@@ -19,11 +19,11 @@ export function rendererFrom(cmd: Command): Renderer {
  * at the registration site.
  */
 export function withRenderer<A extends unknown[]>(
-  runner: (renderer: Renderer, ...rest: A) => void | Promise<void>,
+	runner: (renderer: Renderer, ...rest: A) => void | Promise<void>,
 ): (...args: unknown[]) => Promise<void> {
-  return async (...args: unknown[]) => {
-    const cmd = args[args.length - 1] as Command;
-    const rest = args.slice(0, -1) as A;
-    await runner(rendererFrom(cmd), ...rest);
-  };
+	return async (...args: unknown[]) => {
+		const cmd = args[args.length - 1] as Command;
+		const rest = args.slice(0, -1) as A;
+		await runner(rendererFrom(cmd), ...rest);
+	};
 }
