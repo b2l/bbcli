@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export class EditorError extends Error {
-  override name = "EditorError";
+	override name = "EditorError";
 }
 
 /**
@@ -15,38 +15,36 @@ export class EditorError extends Error {
  * vim/nvim/nano/etc.). On non-zero exit the tempfile is still cleaned up.
  */
 export async function openEditor(initialContents = ""): Promise<string> {
-  const raw = process.env["VISUAL"] ?? process.env["EDITOR"];
-  if (!raw || !raw.trim()) {
-    throw new EditorError(
-      "No editor configured. Set $VISUAL or $EDITOR (e.g. export EDITOR=nvim).",
-    );
-  }
+	const raw = process.env.VISUAL ?? process.env.EDITOR;
+	if (!raw?.trim()) {
+		throw new EditorError(
+			"No editor configured. Set $VISUAL or $EDITOR (e.g. export EDITOR=nvim).",
+		);
+	}
 
-  // Env var may carry args (`code --wait`, `nvim -c 'set ft=markdown'`), so
-  // split on whitespace rather than exec'ing the whole string as one binary.
-  // This doesn't honor shell quoting, but matches how git and gh parse it.
-  const [exe, ...args] = raw.trim().split(/\s+/);
+	// Env var may carry args (`code --wait`, `nvim -c 'set ft=markdown'`), so
+	// split on whitespace rather than exec'ing the whole string as one binary.
+	// This doesn't honor shell quoting, but matches how git and gh parse it.
+	const [exe, ...args] = raw.trim().split(/\s+/);
 
-  const dir = await mkdtemp(join(tmpdir(), "bbcli-editor-"));
-  const path = join(dir, "message.md");
+	const dir = await mkdtemp(join(tmpdir(), "bbcli-editor-"));
+	const path = join(dir, "message.md");
 
-  try {
-    await Bun.write(path, initialContents);
+	try {
+		await Bun.write(path, initialContents);
 
-    const proc = Bun.spawn([exe!, ...args, path], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      throw new EditorError(
-        `Editor (${raw}) exited with code ${exitCode}.`,
-      );
-    }
+		const proc = Bun.spawn([exe!, ...args, path], {
+			stdin: "inherit",
+			stdout: "inherit",
+			stderr: "inherit",
+		});
+		const exitCode = await proc.exited;
+		if (exitCode !== 0) {
+			throw new EditorError(`Editor (${raw}) exited with code ${exitCode}.`);
+		}
 
-    return await Bun.file(path).text();
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+		return await Bun.file(path).text();
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
 }

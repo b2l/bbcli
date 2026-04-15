@@ -13,10 +13,18 @@
  * Usage: bun run generate:api
  */
 import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
-import { overlay, type OperationOverlay, type OverlayParameter } from "./openapi-overlay.ts";
+import {
+	type OperationOverlay,
+	type OverlayParameter,
+	overlay,
+} from "./openapi-overlay.ts";
 
-const SPEC_URL = "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json";
-const OUTPUT_PATH = new URL("../src/shared/bitbucket-http/generated.d.ts", import.meta.url);
+const SPEC_URL =
+	"https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json";
+const OUTPUT_PATH = new URL(
+	"../src/shared/bitbucket-http/generated.d.ts",
+	import.meta.url,
+);
 
 const HEADER = `/**
  * AUTO-GENERATED — do not edit by hand.
@@ -29,7 +37,7 @@ const HEADER = `/**
 console.log(`Fetching OpenAPI spec from ${SPEC_URL}...`);
 const response = await fetch(SPEC_URL);
 if (!response.ok) {
-  throw new Error(`Failed to fetch spec: HTTP ${response.status}`);
+	throw new Error(`Failed to fetch spec: HTTP ${response.status}`);
 }
 const spec = (await response.json()) as Record<string, any>;
 
@@ -41,51 +49,56 @@ const ast = await openapiTS(spec as OpenAPI3);
 const contents = HEADER + astToString(ast);
 
 await Bun.write(OUTPUT_PATH, contents);
-console.log(`Wrote ${contents.length.toLocaleString()} bytes to ${OUTPUT_PATH.pathname}`);
+console.log(
+	`Wrote ${contents.length.toLocaleString()} bytes to ${OUTPUT_PATH.pathname}`,
+);
 
 function applyOverlay(
-  spec: Record<string, any>,
-  overlay: Record<string, Record<string, OperationOverlay>>,
+	spec: Record<string, any>,
+	overlay: Record<string, Record<string, OperationOverlay>>,
 ): void {
-  const paths = spec["paths"] as Record<string, any> | undefined;
-  if (!paths) throw new Error("Spec has no `paths` object — refusing to apply overlay.");
+	const paths = spec.paths as Record<string, any> | undefined;
+	if (!paths)
+		throw new Error("Spec has no `paths` object — refusing to apply overlay.");
 
-  for (const [path, methods] of Object.entries(overlay)) {
-    const pathItem = paths[path];
-    if (!pathItem) {
-      // Loud warning: an overlay entry that doesn't match the spec is
-      // either a typo or a sign Bitbucket renamed something. Either way
-      // the maintainer needs to know.
-      console.warn(`  ! overlay path not found in spec: ${path}`);
-      continue;
-    }
-    for (const [method, mods] of Object.entries(methods)) {
-      const op = pathItem[method];
-      if (!op) {
-        console.warn(`  ! overlay method not found: ${method.toUpperCase()} ${path}`);
-        continue;
-      }
-      op.parameters ??= [];
-      const params = op.parameters as OverlayParameter[];
+	for (const [path, methods] of Object.entries(overlay)) {
+		const pathItem = paths[path];
+		if (!pathItem) {
+			// Loud warning: an overlay entry that doesn't match the spec is
+			// either a typo or a sign Bitbucket renamed something. Either way
+			// the maintainer needs to know.
+			console.warn(`  ! overlay path not found in spec: ${path}`);
+			continue;
+		}
+		for (const [method, mods] of Object.entries(methods)) {
+			const op = pathItem[method];
+			if (!op) {
+				console.warn(
+					`  ! overlay method not found: ${method.toUpperCase()} ${path}`,
+				);
+				continue;
+			}
+			op.parameters ??= [];
+			const params = op.parameters as OverlayParameter[];
 
-      if (mods.replaceParameters) {
-        for (const replacement of mods.replaceParameters) {
-          const idx = params.findIndex(
-            (p) => p.name === replacement.name && p.in === replacement.in,
-          );
-          if (idx >= 0) params[idx] = replacement;
-          else params.push(replacement);
-        }
-      }
-      if (mods.addParameters) {
-        for (const addition of mods.addParameters) {
-          const exists = params.some(
-            (p) => p.name === addition.name && p.in === addition.in,
-          );
-          if (!exists) params.push(addition);
-        }
-      }
-      console.log(`  ✓ overlaid ${method.toUpperCase()} ${path}`);
-    }
-  }
+			if (mods.replaceParameters) {
+				for (const replacement of mods.replaceParameters) {
+					const idx = params.findIndex(
+						(p) => p.name === replacement.name && p.in === replacement.in,
+					);
+					if (idx >= 0) params[idx] = replacement;
+					else params.push(replacement);
+				}
+			}
+			if (mods.addParameters) {
+				for (const addition of mods.addParameters) {
+					const exists = params.some(
+						(p) => p.name === addition.name && p.in === addition.in,
+					);
+					if (!exists) params.push(addition);
+				}
+			}
+			console.log(`  ✓ overlaid ${method.toUpperCase()} ${path}`);
+		}
+	}
 }

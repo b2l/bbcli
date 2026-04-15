@@ -1,4 +1,4 @@
-import { beforeAll, afterEach, afterAll } from "bun:test";
+import { afterAll, afterEach, beforeAll } from "bun:test";
 import { setupServer } from "msw/node";
 
 /**
@@ -12,9 +12,9 @@ import { setupServer } from "msw/node";
 export const server = setupServer();
 
 export function setupMsw(): void {
-  beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-  afterEach(() => server.resetHandlers());
-  afterAll(() => server.close());
+	beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+	afterEach(() => server.resetHandlers());
+	afterAll(() => server.close());
 }
 
 export const BITBUCKET_BASE = "https://api.bitbucket.org/2.0";

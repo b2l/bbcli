@@ -5,5 +5,5 @@ import type { Renderer } from "./types.ts";
 export type { Column, Field, Renderer, Style } from "./types.ts";
 
 export function createRenderer({ json }: { json: boolean }): Renderer {
-  return json ? createJsonRenderer() : createTextRenderer();
+	return json ? createJsonRenderer() : createTextRenderer();
 }

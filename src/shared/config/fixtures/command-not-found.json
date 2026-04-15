@@ -1,4 +1,4 @@
 {
-  "email": "alice@example.com",
-  "token_command": ["bbcli-definitely-not-a-real-binary-xyz"]
+	"email": "alice@example.com",
+	"token_command": ["bbcli-definitely-not-a-real-binary-xyz"]
 }
