@@ -48,11 +48,23 @@ export type Reviewer = {
 	state: ReviewState;
 };
 
+/**
+ * A non-reviewer participant on a PR. State is populated when the person
+ * has approved or requested changes without being on the formal reviewer
+ * list (e.g. someone approving a Snyk auto-PR with no assigned reviewers).
+ * Pure commenters appear with state="pending".
+ */
+export type Participant = {
+	account: PullRequestAuthor;
+	state: ReviewState;
+};
+
 export type PullRequestDetail = PullRequest & {
 	description: string;
 	sourceBranch: string;
 	destinationBranch: string;
 	reviewers: Reviewer[];
+	participants: Participant[];
 };
 
 export type ListPullRequestsOptions = {
@@ -419,6 +431,145 @@ export async function createPullRequestComment(
 	};
 }
 
+/**
+ * Records the authenticated user's review state on a PR. Approve and
+ * request-changes are two independent states; they map to symmetric
+ * POST/DELETE pairs on `/approve` and `/request-changes`.
+ *
+ * Idempotency is NOT documented by Bitbucket for any of these endpoints.
+ * We let non-2xx errors propagate; callers who need "re-running is a
+ * no-op" semantics should handle expected errors (e.g. a 409 conflict on
+ * re-approval) themselves. Smoke-test to find the actual behavior.
+ *
+ * `DELETE /approve` is documented to return `400` when the PR has already
+ * been merged — surface that at the command layer.
+ */
+async function postParticipantAction(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+	action: "approve" | "request-changes",
+): Promise<void> {
+	const client = createBitbucketClient(credentials);
+	const { response } =
+		action === "approve"
+			? await client.POST(
+					"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/approve",
+					{
+						params: {
+							path: {
+								workspace: ref.workspace,
+								repo_slug: ref.slug,
+								pull_request_id: pullRequestId,
+							},
+						},
+					},
+				)
+			: await client.POST(
+					"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/request-changes",
+					{
+						params: {
+							path: {
+								workspace: ref.workspace,
+								repo_slug: ref.slug,
+								pull_request_id: pullRequestId,
+							},
+						},
+					},
+				);
+
+	if (!response.ok) {
+		throw new PullRequestError(
+			`Failed to ${action} pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+}
+
+async function deleteParticipantAction(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+	action: "approve" | "request-changes",
+): Promise<void> {
+	const client = createBitbucketClient(credentials);
+	const { response } =
+		action === "approve"
+			? await client.DELETE(
+					"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/approve",
+					{
+						params: {
+							path: {
+								workspace: ref.workspace,
+								repo_slug: ref.slug,
+								pull_request_id: pullRequestId,
+							},
+						},
+					},
+				)
+			: await client.DELETE(
+					"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/request-changes",
+					{
+						params: {
+							path: {
+								workspace: ref.workspace,
+								repo_slug: ref.slug,
+								pull_request_id: pullRequestId,
+							},
+						},
+					},
+				);
+
+	if (!response.ok) {
+		throw new PullRequestError(
+			`Failed to withdraw ${action} on pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+}
+
+export async function approvePullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<void> {
+	await postParticipantAction(credentials, ref, pullRequestId, "approve");
+}
+
+export async function unapprovePullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<void> {
+	await deleteParticipantAction(credentials, ref, pullRequestId, "approve");
+}
+
+export async function requestChangesOnPullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<void> {
+	await postParticipantAction(
+		credentials,
+		ref,
+		pullRequestId,
+		"request-changes",
+	);
+}
+
+export async function withdrawRequestChanges(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<void> {
+	await deleteParticipantAction(
+		credentials,
+		ref,
+		pullRequestId,
+		"request-changes",
+	);
+}
+
 function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 	const base = toPullRequest(pr);
 	const raw = pr as Record<string, any>;
@@ -428,6 +579,7 @@ function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 		sourceBranch: String(raw.source?.branch?.name ?? ""),
 		destinationBranch: String(raw.destination?.branch?.name ?? ""),
 		reviewers: toReviewers(raw.participants),
+		participants: toParticipants(raw.participants),
 	};
 }
 
@@ -437,6 +589,19 @@ function toReviewers(raw: unknown): Reviewer[] {
 	for (const p of raw as RawParticipant[]) {
 		const pp = p as Record<string, any>;
 		if (pp.role !== "REVIEWER") continue;
+		const account = toAuthor(pp.user);
+		if (!account) continue;
+		out.push({ account, state: toReviewState(pp.state) });
+	}
+	return out;
+}
+
+function toParticipants(raw: unknown): Participant[] {
+	if (!Array.isArray(raw)) return [];
+	const out: Participant[] = [];
+	for (const p of raw as RawParticipant[]) {
+		const pp = p as Record<string, any>;
+		if (pp.role !== "PARTICIPANT") continue;
 		const account = toAuthor(pp.user);
 		if (!account) continue;
 		out.push({ account, state: toReviewState(pp.state) });

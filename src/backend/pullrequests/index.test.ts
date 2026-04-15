@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { HttpResponse, http } from "msw";
 import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 import {
+	approvePullRequest,
 	createPullRequest,
 	createPullRequestComment,
 	findOpenPullRequestForBranch,
@@ -11,6 +12,9 @@ import {
 	type PullRequest,
 	type PullRequestDetail,
 	PullRequestError,
+	requestChangesOnPullRequest,
+	unapprovePullRequest,
+	withdrawRequestChanges,
 } from "./index.ts";
 
 setupMsw();
@@ -69,7 +73,8 @@ function makePrDetail(
 				user: { uuid: "{dave}", display_name: "Dave", nickname: "dave" },
 				state: null,
 			},
-			// non-reviewer participants (plain commenters) should be dropped
+			// PARTICIPANT with no review state (plain commenter) — surfaces
+			// in participants[] with state=pending, stays out of reviewers[]
 			{
 				role: "PARTICIPANT",
 				user: { uuid: "{eve}", display_name: "Eve", nickname: "eve" },
@@ -388,6 +393,12 @@ describe("getPullRequest", () => {
 					state: "pending",
 				},
 			],
+			participants: [
+				{
+					account: { uuid: "{eve}", displayName: "Eve", nickname: "eve" },
+					state: "pending",
+				},
+			],
 		});
 	});
 
@@ -412,6 +423,46 @@ describe("getPullRequest", () => {
 
 		const result = await getPullRequest(creds, ref, 42);
 		expect(result.reviewers).toEqual([]);
+		expect(result.participants).toEqual([]);
+	});
+
+	test("surfaces ad-hoc approvers as participants (Snyk-style no-reviewer PR)", async () => {
+		// Snyk auto-PRs ship with no formal reviewers. When someone approves
+		// one, Bitbucket records them as role=PARTICIPANT with state=approved.
+		// We want that surfaced so the approver can see their own action
+		// landed.
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						participants: [
+							{
+								role: "PARTICIPANT",
+								user: {
+									uuid: "{nico}",
+									display_name: "Nicolas",
+									nickname: "nicolas",
+								},
+								state: "approved",
+							},
+						],
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.reviewers).toEqual([]);
+		expect(result.participants).toEqual([
+			{
+				account: {
+					uuid: "{nico}",
+					displayName: "Nicolas",
+					nickname: "nicolas",
+				},
+				state: "approved",
+			},
+		]);
 	});
 });
 
@@ -759,6 +810,111 @@ describe("createPullRequestComment", () => {
 		const err = await createPullRequestComment(creds, ref, 99, "nope").catch(
 			(e) => e,
 		);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("review action endpoints (approve / unapprove / request-changes / unrequest-changes)", () => {
+	const APPROVE_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/approve`;
+	const REQUEST_CHANGES_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/request-changes`;
+
+	test("approvePullRequest POSTs with no body", async () => {
+		let seenMethod: string | null = null;
+		let seenBody: string | null = null;
+		server.use(
+			http.post(APPROVE_PATH(42), async ({ request }) => {
+				seenMethod = request.method;
+				seenBody = await request.text();
+				return HttpResponse.json(
+					{ type: "participant", role: "REVIEWER", approved: true },
+					{ status: 200 },
+				);
+			}),
+		);
+
+		await approvePullRequest(creds, ref, 42);
+
+		expect(seenMethod!).toBe("POST");
+		expect(seenBody!).toBe("");
+	});
+
+	test("unapprovePullRequest DELETEs and tolerates 204 no-content", async () => {
+		let seenMethod: string | null = null;
+		server.use(
+			http.delete(APPROVE_PATH(42), ({ request }) => {
+				seenMethod = request.method;
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+
+		await unapprovePullRequest(creds, ref, 42);
+
+		expect(seenMethod!).toBe("DELETE");
+	});
+
+	test("unapprovePullRequest surfaces 400 (PR already merged) cleanly", async () => {
+		// Documented case per the spec: DELETE /approve returns 400 if the
+		// PR has already been merged. We propagate the status so the command
+		// layer can show a clean message rather than a raw HTTP error.
+		server.use(
+			http.delete(APPROVE_PATH(42), () =>
+				HttpResponse.json(
+					{
+						type: "error",
+						error: { message: "PR cannot be unapproved (merged)" },
+					},
+					{ status: 400 },
+				),
+			),
+		);
+
+		const err = await unapprovePullRequest(creds, ref, 42).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(400);
+	});
+
+	test("requestChangesOnPullRequest POSTs to /request-changes", async () => {
+		let seenMethod: string | null = null;
+		server.use(
+			http.post(REQUEST_CHANGES_PATH(42), ({ request }) => {
+				seenMethod = request.method;
+				return HttpResponse.json(
+					{ type: "participant", role: "REVIEWER", state: "changes_requested" },
+					{ status: 200 },
+				);
+			}),
+		);
+
+		await requestChangesOnPullRequest(creds, ref, 42);
+
+		expect(seenMethod!).toBe("POST");
+	});
+
+	test("withdrawRequestChanges DELETEs to /request-changes", async () => {
+		let seenMethod: string | null = null;
+		server.use(
+			http.delete(REQUEST_CHANGES_PATH(42), ({ request }) => {
+				seenMethod = request.method;
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+
+		await withdrawRequestChanges(creds, ref, 42);
+
+		expect(seenMethod!).toBe("DELETE");
+	});
+
+	test("approvePullRequest surfaces 404 when the PR does not exist", async () => {
+		server.use(
+			http.post(APPROVE_PATH(99), () =>
+				HttpResponse.json({ type: "error" }, { status: 404 }),
+			),
+		);
+
+		const err = await approvePullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
 	});
