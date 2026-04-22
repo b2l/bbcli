@@ -4,6 +4,7 @@ import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestDiff } from "./diff.ts";
 import { runPullRequestList } from "./list.ts";
+import { runPullRequestMerge } from "./merge.ts";
 import { runPullRequestReview } from "./review.ts";
 import { runPullRequestView } from "./view.ts";
 
@@ -85,6 +86,26 @@ export function registerPullRequestCommands(program: Command): void {
 			"Override repository detection",
 		)
 		.action(withRenderer(runPullRequestDiff));
+
+	pr.command("merge")
+		.description(
+			"Merge an open pull request (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.option(
+			"-s, --strategy <name>",
+			"Merge strategy: merge_commit, squash, fast_forward, squash_fast_forward, rebase_fast_forward, rebase_merge (default: branch's configured strategy)",
+		)
+		.option("-m, --message <message>", "Override the merge commit message")
+		.option(
+			"--delete",
+			"Delete the source branch remotely and locally after merging",
+		)
+		.action(withRenderer(runPullRequestMerge));
 
 	pr.command("review")
 		.description(

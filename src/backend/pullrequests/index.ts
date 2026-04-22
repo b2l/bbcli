@@ -27,6 +27,26 @@ export type PullRequestState =
 	| "DECLINED"
 	| "SUPERSEDED";
 
+/**
+ * Merge strategies recognized by Bitbucket on `POST /pullrequests/{id}/merge`.
+ * Mirrors the `pullrequest_merge_parameters.merge_strategy` enum (generated
+ * schema). The list *allowed* on any given destination branch is a subset
+ * exposed as `PullRequestDetail.allowedMergeStrategies`.
+ */
+export const MERGE_STRATEGIES = [
+	"merge_commit",
+	"squash",
+	"fast_forward",
+	"squash_fast_forward",
+	"rebase_fast_forward",
+	"rebase_merge",
+] as const;
+export type MergeStrategy = (typeof MERGE_STRATEGIES)[number];
+
+export function isMergeStrategy(value: string): value is MergeStrategy {
+	return (MERGE_STRATEGIES as readonly string[]).includes(value);
+}
+
 export type PullRequestAuthor = {
 	uuid: string;
 	displayName: string;
@@ -65,6 +85,20 @@ export type PullRequestDetail = PullRequest & {
 	description: string;
 	sourceBranch: string;
 	destinationBranch: string;
+	/**
+	 * The destination branch's configured default merge strategy, or null
+	 * when the branch has no default set (Bitbucket's own fallback is
+	 * `"merge_commit"`). Only populated when the fetch explicitly requests
+	 * `fields=+destination.branch.default_merge_strategy`.
+	 */
+	defaultMergeStrategy: MergeStrategy | null;
+	/**
+	 * Strategies the destination branch permits on merge. Empty array when
+	 * the branch has no restrictions configured (in which case the server
+	 * allows all). Only populated when the fetch explicitly requests
+	 * `fields=+destination.branch.merge_strategies`.
+	 */
+	allowedMergeStrategies: MergeStrategy[];
 	reviewers: Reviewer[];
 	participants: Participant[];
 };
@@ -266,9 +300,25 @@ export async function createPullRequest(
 }
 
 /**
- * Fetches a single pull request by id. Single typed call — the overlay
- * (BBC2-38) gives us typed path params and response shape, so we stay on
- * openapi-fetch's client rather than dropping to raw fetch.
+ * Fields the default serialization omits, requested additively via Bitbucket's
+ * `fields=+foo,+bar` mechanism. Both live on `destination.branch` and are
+ * required for `bb pr merge` — the default strategy and the client-side
+ * strategy validation list. See docs/bb-notes.md → "Default merge strategy".
+ *
+ * Adding to the default response (rather than dropping fields) means
+ * existing consumers of this function are unaffected.
+ */
+const PR_EXTRA_FIELDS = [
+	"+destination.branch.default_merge_strategy",
+	"+destination.branch.merge_strategies",
+].join(",");
+
+/**
+ * Fetches a single pull request by id. Augments the default response with
+ * merge-strategy fields via `fields=+...` — the typed path params stay
+ * intact; only the query params need a local `as any` because openapi-fetch's
+ * generated types declare `query?: never` for this endpoint (see
+ * docs/bb-notes.md → "Gotcha: `fields` is not declared in the OpenAPI spec").
  */
 export async function getPullRequest(
 	credentials: Credentials,
@@ -285,6 +335,10 @@ export async function getPullRequest(
 					repo_slug: ref.slug,
 					pull_request_id: id,
 				},
+				// `fields` isn't in the generated types for this endpoint; see
+				// docs/bb-notes.md → "Gotcha: `fields` is not declared in the
+				// OpenAPI spec". Cast to loosen the typed contract just here.
+				query: { fields: PR_EXTRA_FIELDS } as unknown as undefined,
 			},
 		},
 	);
@@ -607,6 +661,142 @@ export async function withdrawRequestChanges(
 	);
 }
 
+export type MergeInput = {
+	mergeStrategy: MergeStrategy;
+	/** Free-form merge commit message. Ignored by `fast_forward`. Max 128 KiB. */
+	message?: string;
+	/**
+	 * Server-side branch cleanup. When true, Bitbucket deletes the source
+	 * branch from the remote after the merge lands. Local-side cleanup is
+	 * the command layer's responsibility.
+	 */
+	closeSourceBranch?: boolean;
+};
+
+/**
+ * Outcome of the sync merge POST. The server returns:
+ *   200 → merge complete, body is the updated PR (mapped to `{kind:"done"}`).
+ *   202 → merge running async (either because it exceeded the sync timeout
+ *         or the caller opted in). The `Location` header carries the
+ *         task-status polling URL (mapped to `{kind:"async"}`).
+ *
+ * 4xx/5xx/555 propagate as `PullRequestError` — callers map them to user
+ * messages (409 "refs changed, retry", 555 "timed out, retry", etc.).
+ */
+export type MergeResult =
+	| { kind: "done"; pr: PullRequestDetail }
+	| { kind: "async"; taskUrl: string };
+
+export async function mergePullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+	input: MergeInput,
+): Promise<MergeResult> {
+	const client = createBitbucketClient(credentials);
+	const { data, response } = await client.POST(
+		"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/merge",
+		{
+			params: {
+				path: {
+					workspace: ref.workspace,
+					repo_slug: ref.slug,
+					pull_request_id: pullRequestId,
+				},
+			},
+			body: {
+				type: "pullrequest_merge_parameters",
+				merge_strategy: input.mergeStrategy,
+				...(input.message !== undefined ? { message: input.message } : {}),
+				...(input.closeSourceBranch !== undefined
+					? { close_source_branch: input.closeSourceBranch }
+					: {}),
+			},
+		},
+	);
+
+	if (response.status === 202) {
+		const location = response.headers.get("location");
+		if (!location) {
+			throw new PullRequestError(
+				`Merge of pull request #${pullRequestId} returned 202 with no Location header — cannot poll.`,
+				202,
+			);
+		}
+		return { kind: "async", taskUrl: location };
+	}
+
+	if (!response.ok || !data) {
+		throw new PullRequestError(
+			mergeErrorMessage(pullRequestId, response.status),
+			response.status,
+		);
+	}
+
+	return { kind: "done", pr: toPullRequestDetail(data as RawPullRequest) };
+}
+
+function mergeErrorMessage(pullRequestId: number, status: number): string {
+	switch (status) {
+		case 409:
+			return `Failed to merge pull request #${pullRequestId}: refs changed mid-merge (HTTP 409). Re-run after fetching the latest state.`;
+		case 555:
+			return `Merge of pull request #${pullRequestId} timed out server-side (HTTP 555). Re-run after giving it a moment.`;
+		default:
+			return `Failed to merge pull request #${pullRequestId}: HTTP ${status}.`;
+	}
+}
+
+export type MergeTaskStatus =
+	| { status: "PENDING" }
+	| { status: "SUCCESS"; pr: PullRequestDetail }
+	| { status: "FAILED"; error: string };
+
+/**
+ * Polls a single merge-task-status URL (the one from the 202 Location
+ * header). Uses raw fetch because the 202 URL is opaque (built by the
+ * server; openapi-fetch can't route it as a typed endpoint).
+ */
+export async function getMergeTaskStatus(
+	credentials: Credentials,
+	taskUrl: string,
+): Promise<MergeTaskStatus> {
+	const response = await fetch(taskUrl, {
+		method: "GET",
+		headers: {
+			Authorization: basicAuthHeader(credentials),
+			Accept: "application/json",
+		},
+	});
+
+	if (!response.ok) {
+		throw new PullRequestError(
+			`Failed to poll merge task: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	const raw = (await response.json()) as Record<string, any>;
+	const status = String(raw.task_status ?? "");
+	if (status === "SUCCESS") {
+		const mergeResult = raw.merge_result as RawPullRequest | undefined;
+		if (!mergeResult) {
+			throw new PullRequestError(
+				"Merge task reported SUCCESS but returned no merge_result.",
+			);
+		}
+		return { status: "SUCCESS", pr: toPullRequestDetail(mergeResult) };
+	}
+	if (status === "PENDING") return { status: "PENDING" };
+	// Anything else (typically FAILED / ERROR) surfaces the server's error
+	// message verbatim. Bitbucket's shape: { type: "error", error: { message } }.
+	const message =
+		typeof raw.error?.message === "string"
+			? raw.error.message
+			: `Merge task reported '${status}'.`;
+	return { status: "FAILED", error: message };
+}
+
 function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 	const base = toPullRequest(pr);
 	const raw = pr as Record<string, any>;
@@ -615,9 +805,29 @@ function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 		description: String(raw.summary?.raw ?? raw.description ?? ""),
 		sourceBranch: String(raw.source?.branch?.name ?? ""),
 		destinationBranch: String(raw.destination?.branch?.name ?? ""),
+		defaultMergeStrategy: toMergeStrategyOrNull(
+			raw.destination?.branch?.default_merge_strategy,
+		),
+		allowedMergeStrategies: toMergeStrategyList(
+			raw.destination?.branch?.merge_strategies,
+		),
 		reviewers: toReviewers(raw.participants),
 		participants: toParticipants(raw.participants),
 	};
+}
+
+function toMergeStrategyOrNull(raw: unknown): MergeStrategy | null {
+	if (typeof raw !== "string" || !raw) return null;
+	return isMergeStrategy(raw) ? raw : null;
+}
+
+function toMergeStrategyList(raw: unknown): MergeStrategy[] {
+	if (!Array.isArray(raw)) return [];
+	const out: MergeStrategy[] = [];
+	for (const entry of raw) {
+		if (typeof entry === "string" && isMergeStrategy(entry)) out.push(entry);
+	}
+	return out;
 }
 
 function toReviewers(raw: unknown): Reviewer[] {

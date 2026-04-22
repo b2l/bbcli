@@ -1,6 +1,23 @@
 import { $ } from "bun";
 
 /**
+ * Error from a git command that was expected to succeed. Carries git's stderr
+ * so callers can surface the underlying message (which is usually more
+ * actionable than anything bbcli could synthesize) to the user.
+ */
+export class GitError extends Error {
+	override name = "GitError";
+	readonly stderr: string;
+	readonly exitCode: number;
+
+	constructor(message: string, exitCode: number, stderr: string) {
+		super(message);
+		this.exitCode = exitCode;
+		this.stderr = stderr;
+	}
+}
+
+/**
  * Thin wrapper around the git CLI. Injected into resolveRepository so tests
  * can simulate every failure mode without shelling out. Production code uses
  * the default implementation backed by `git -C <cwd>`.
@@ -42,6 +59,19 @@ export interface GitRunner {
 		cwd: string,
 		remote: string,
 	): Promise<string | undefined>;
+	/** Returns true iff a local branch with the given name exists. */
+	hasLocalBranch(cwd: string, branch: string): Promise<boolean>;
+	/**
+	 * Switches to an existing local branch. Throws GitError on non-zero
+	 * exit (most commonly: a dirty working tree that would be clobbered).
+	 */
+	checkoutExistingBranch(cwd: string, branch: string): Promise<void>;
+	/**
+	 * Deletes a local branch safely (`git branch -d`). Throws GitError on
+	 * non-zero exit, which git returns when the branch hasn't been merged
+	 * anywhere git can see — we never force with `-D` from this wrapper.
+	 */
+	deleteLocalBranch(cwd: string, branch: string): Promise<void>;
 }
 
 export const defaultGitRunner: GitRunner = {
@@ -120,4 +150,37 @@ export const defaultGitRunner: GitRunner = {
 		const prefix = `${remote}/`;
 		return full.startsWith(prefix) ? full.slice(prefix.length) : full;
 	},
+
+	async hasLocalBranch(cwd, branch) {
+		// `show-ref --verify --quiet` exits 0 iff the ref exists; no output.
+		const result =
+			await $`git -C ${cwd} show-ref --verify --quiet ${`refs/heads/${branch}`}`
+				.nothrow()
+				.quiet();
+		return result.exitCode === 0;
+	},
+
+	async checkoutExistingBranch(cwd, branch) {
+		const result = await $`git -C ${cwd} checkout ${branch}`.nothrow().quiet();
+		throwIfFailed(result, `git checkout ${branch}`);
+	},
+
+	async deleteLocalBranch(cwd, branch) {
+		const result = await $`git -C ${cwd} branch -d ${branch}`.nothrow().quiet();
+		throwIfFailed(result, `git branch -d ${branch}`);
+	},
 };
+
+function throwIfFailed(
+	result: { exitCode: number; stderr: Buffer; stdout: Buffer },
+	command: string,
+): void {
+	if (result.exitCode === 0) return;
+	const stderr = result.stderr.toString().trim();
+	const stdout = result.stdout.toString().trim();
+	// Git writes most diagnostics to stderr, but a few to stdout; prefer
+	// stderr, fall back to stdout so we never lose the actual reason.
+	const message =
+		stderr || stdout || `${command} exited with code ${result.exitCode}`;
+	throw new GitError(message, result.exitCode, stderr);
+}
