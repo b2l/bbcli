@@ -5,6 +5,7 @@ import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestDiff } from "./diff.ts";
 import { runPullRequestEdit } from "./edit.ts";
 import { runPullRequestList } from "./list.ts";
+import { runPullRequestReady } from "./ready.ts";
 import { runPullRequestReview } from "./review.ts";
 import { runPullRequestView } from "./view.ts";
 
@@ -99,6 +100,17 @@ export function registerPullRequestCommands(program: Command): void {
 		.option("-t, --title <title>", "New title")
 		.option("-d, --description <description>", "New description")
 		.action(withRenderer(runPullRequestEdit));
+
+	pr.command("ready")
+		.description(
+			"Mark a draft pull request as ready for review (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.action(withRenderer(runPullRequestReady));
 
 	pr.command("review")
 		.description(

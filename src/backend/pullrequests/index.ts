@@ -37,6 +37,13 @@ export type PullRequest = {
 	id: number;
 	title: string;
 	state: PullRequestState;
+	/**
+	 * Bitbucket models draft as a boolean flag alongside the `state` enum —
+	 * a draft PR still reports `state: "OPEN"`. Keep them independent so
+	 * downstream code doesn't have to inspect both fields to know "is this
+	 * a draft".
+	 */
+	draft: boolean;
 	author: PullRequestAuthor | null;
 	createdOn: string;
 	updatedOn: string;
@@ -145,6 +152,7 @@ function toPullRequest(pr: RawPullRequest): PullRequest {
 		id: Number(raw.id ?? 0),
 		title: String(raw.title ?? ""),
 		state: String(raw.state ?? "") as PullRequestState,
+		draft: Boolean(raw.draft ?? false),
 		author: toAuthor(raw.author),
 		createdOn: String(raw.created_on ?? ""),
 		updatedOn: String(raw.updated_on ?? ""),
@@ -268,6 +276,12 @@ export async function createPullRequest(
 export type UpdatePullRequestInput = {
 	title?: string;
 	description?: string;
+	/**
+	 * Set to `false` to flip a draft PR to ready for review. The reverse
+	 * (ready → draft) is not supported by Bitbucket Cloud and intentionally
+	 * not exposed here.
+	 */
+	draft?: boolean;
 };
 
 /**
@@ -303,6 +317,7 @@ export async function updatePullRequest(
 				...(input.description !== undefined
 					? { description: input.description }
 					: {}),
+				...(input.draft !== undefined ? { draft: input.draft } : {}),
 			},
 		},
 	);

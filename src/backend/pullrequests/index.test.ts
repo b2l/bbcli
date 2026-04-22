@@ -312,6 +312,7 @@ describe("listPullRequests", () => {
 			id: 7,
 			title: "Refactor auth",
 			state: "MERGED",
+			draft: false,
 			author: {
 				uuid: "{alice-uuid}",
 				displayName: "Alice A.",
@@ -373,6 +374,7 @@ describe("getPullRequest", () => {
 			id: 42,
 			title: "Rework auth",
 			state: "OPEN",
+			draft: false,
 			author: { uuid: "{alice}", displayName: "Alice", nickname: "alice" },
 			createdOn: "2026-04-10T00:00:00Z",
 			updatedOn: "2026-04-13T00:00:00Z",
@@ -414,6 +416,26 @@ describe("getPullRequest", () => {
 		const err = await getPullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
+	});
+
+	test("maps raw.draft onto the PR detail", async () => {
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(makePrDetail({ draft: true })),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.draft).toBe(true);
+	});
+
+	test("draft defaults to false when the field is missing", async () => {
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () => HttpResponse.json(makePrDetail())),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.draft).toBe(false);
 	});
 
 	test("handles a PR with no participants", async () => {
@@ -962,6 +984,21 @@ describe("updatePullRequest", () => {
 			description: "new description",
 		});
 		expect(seenBody!).not.toHaveProperty("title");
+	});
+
+	test("PUTs draft:false for the draft → ready flip", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.put(PR_DETAIL_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42, draft: false }));
+			}),
+		);
+
+		const result = await updatePullRequest(creds, ref, 42, { draft: false });
+
+		expect(seenBody!).toEqual({ type: "pullrequest", draft: false });
+		expect(result.draft).toBe(false);
 	});
 
 	test("PUTs title and description together when both provided", async () => {
