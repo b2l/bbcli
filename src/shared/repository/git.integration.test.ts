@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { defaultGitRunner } from "./git.ts";
+import { defaultGitRunner, GitError } from "./git.ts";
 import { RepositoryResolutionError, resolveRepository } from "./resolve.ts";
 
 /**
@@ -163,6 +163,132 @@ describe("defaultGitRunner against a local bare remote", () => {
 		expect(
 			await defaultGitRunner.getDefaultBranchFromRemote(repoDir, "origin"),
 		).toBeUndefined();
+	});
+
+	test("fetchRef pulls a branch that was pushed to the remote after clone", async () => {
+		// Push a new branch to the bare remote from a side seed, then verify
+		// the clone can fetch it by name and ends up with the remote-tracking
+		// ref.
+		const sideDir = join(cloneDir, "..", "side");
+		await $`git clone -q ${bareDir} ${sideDir}`.quiet();
+		await $`git -C ${sideDir} -c user.email=s@b.co -c user.name=Side checkout -b feature/fetch-me`.quiet();
+		await $`git -C ${sideDir} -c user.email=s@b.co -c user.name=Side commit --allow-empty -m "side work"`.quiet();
+		await $`git -C ${sideDir} push -q origin feature/fetch-me`.quiet();
+
+		await defaultGitRunner.fetchRef(cloneDir, "origin", "feature/fetch-me");
+
+		const remoteSha = await defaultGitRunner.getSha(
+			cloneDir,
+			"refs/remotes/origin/feature/fetch-me",
+		);
+		expect(remoteSha).toBeDefined();
+	});
+
+	test("fetchRef throws GitError for a branch that does not exist on the remote", async () => {
+		const err = await defaultGitRunner
+			.fetchRef(cloneDir, "origin", "no-such-branch")
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(GitError);
+	});
+
+	test("hasLocalBranch reports the presence of local branches", async () => {
+		expect(await defaultGitRunner.hasLocalBranch(cloneDir, "main")).toBe(true);
+		expect(
+			await defaultGitRunner.hasLocalBranch(cloneDir, "never-created"),
+		).toBe(false);
+	});
+
+	test("checkoutCreateTracking creates a local branch tracking the remote ref", async () => {
+		// Seed a branch on the remote, fetch it, then use checkoutCreateTracking
+		// to create a local copy.
+		const seedDir = join(cloneDir, "..", "seed2");
+		await $`git clone -q ${bareDir} ${seedDir}`.quiet();
+		await $`git -C ${seedDir} -c user.email=s@b.co -c user.name=Side checkout -b feature/track-me`.quiet();
+		await $`git -C ${seedDir} -c user.email=s@b.co -c user.name=Side commit --allow-empty -m "track"`.quiet();
+		await $`git -C ${seedDir} push -q origin feature/track-me`.quiet();
+
+		await defaultGitRunner.fetchRef(cloneDir, "origin", "feature/track-me");
+		await defaultGitRunner.checkoutCreateTracking(
+			cloneDir,
+			"feature/track-me",
+			"origin/feature/track-me",
+		);
+
+		expect(
+			await defaultGitRunner.hasLocalBranch(cloneDir, "feature/track-me"),
+		).toBe(true);
+		// Current branch is now feature/track-me
+		expect(await defaultGitRunner.getCurrentBranch(cloneDir)).toBe(
+			"feature/track-me",
+		);
+
+		// Clean up: switch back to main for subsequent tests.
+		await defaultGitRunner.checkoutExistingBranch(cloneDir, "main");
+	});
+
+	test("checkoutExistingBranch switches to an existing local branch", async () => {
+		// We should currently be on main (reset at the end of the previous test).
+		expect(await defaultGitRunner.getCurrentBranch(cloneDir)).toBe("main");
+
+		await defaultGitRunner.checkoutExistingBranch(cloneDir, "feature/track-me");
+		expect(await defaultGitRunner.getCurrentBranch(cloneDir)).toBe(
+			"feature/track-me",
+		);
+
+		await defaultGitRunner.checkoutExistingBranch(cloneDir, "main");
+	});
+
+	test("checkoutCreateTracking throws GitError when the branch already exists", async () => {
+		const err = await defaultGitRunner
+			.checkoutCreateTracking(
+				cloneDir,
+				"feature/track-me",
+				"origin/feature/track-me",
+			)
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(GitError);
+	});
+
+	test("mergeFastForwardOnly fast-forwards when the branch is strictly behind", async () => {
+		// Advance the remote's main by one commit via a side clone, then
+		// fetch + ff in our main clone.
+		const ahead = join(cloneDir, "..", "ahead");
+		await $`git clone -q ${bareDir} ${ahead}`.quiet();
+		await $`git -C ${ahead} -c user.email=a@b.co -c user.name=Ahead commit --allow-empty -m "ahead"`.quiet();
+		await $`git -C ${ahead} push -q origin main`.quiet();
+
+		await defaultGitRunner.fetchRef(cloneDir, "origin", "main");
+		await defaultGitRunner.mergeFastForwardOnly(cloneDir, "origin/main");
+
+		const localSha = await defaultGitRunner.getSha(cloneDir, "HEAD");
+		const remoteSha = await defaultGitRunner.getSha(
+			cloneDir,
+			"refs/remotes/origin/main",
+		);
+		expect(localSha).toBe(remoteSha);
+	});
+
+	test("mergeFastForwardOnly throws GitError when the branches have diverged", async () => {
+		// Real divergence: make a fresh clone, commit locally (one side of
+		// the diverge), then push a different commit to origin/main from a
+		// second clone (the other side). Now the common ancestor is in the
+		// past but neither branch is an ancestor of the other → git refuses
+		// to ff.
+		const divergeDir = join(cloneDir, "..", "diverge");
+		await $`git clone -q ${bareDir} ${divergeDir}`.quiet();
+		await $`git -C ${divergeDir} -c user.email=d@b.co -c user.name=Diverge commit --allow-empty -m "local diverge"`.quiet();
+
+		const remoteSide = join(cloneDir, "..", "remote-side");
+		await $`git clone -q ${bareDir} ${remoteSide}`.quiet();
+		await $`git -C ${remoteSide} -c user.email=r@b.co -c user.name=Remote commit --allow-empty -m "remote diverge"`.quiet();
+		await $`git -C ${remoteSide} push -q origin main`.quiet();
+
+		await defaultGitRunner.fetchRef(divergeDir, "origin", "main");
+
+		const err = await defaultGitRunner
+			.mergeFastForwardOnly(divergeDir, "origin/main")
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(GitError);
 	});
 });
 

@@ -55,8 +55,14 @@ function makePrDetail(
 		summary: {
 			raw: "A detailed PR description.\n\n- fix thing\n- fix other thing",
 		},
-		source: { branch: { name: "feature/auth" } },
-		destination: { branch: { name: "main" } },
+		source: {
+			branch: { name: "feature/auth" },
+			repository: { full_name: "ws/repo" },
+		},
+		destination: {
+			branch: { name: "main" },
+			repository: { full_name: "ws/repo" },
+		},
 		links: { html: { href: "https://bitbucket.org/ws/repo/pull-requests/42" } },
 		participants: [
 			{
@@ -380,6 +386,8 @@ describe("getPullRequest", () => {
 				"A detailed PR description.\n\n- fix thing\n- fix other thing",
 			sourceBranch: "feature/auth",
 			destinationBranch: "main",
+			sourceRepositoryFullName: "ws/repo",
+			destinationRepositoryFullName: "ws/repo",
 			reviewers: [
 				{
 					account: { uuid: "{bob}", displayName: "Bob", nickname: "bob" },
@@ -413,6 +421,52 @@ describe("getPullRequest", () => {
 		const err = await getPullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
+	});
+
+	test("surfaces source vs destination repository full_name for fork detection", async () => {
+		// Fork-based PRs carry a different `source.repository.full_name` from
+		// the destination. Consumers (bb pr checkout) rely on this distinction
+		// to refuse fork checkouts cleanly.
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						source: {
+							branch: { name: "patch-1" },
+							repository: { full_name: "fork-ws/repo" },
+						},
+						destination: {
+							branch: { name: "main" },
+							repository: { full_name: "ws/repo" },
+						},
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.sourceRepositoryFullName).toBe("fork-ws/repo");
+		expect(result.destinationRepositoryFullName).toBe("ws/repo");
+	});
+
+	test("falls back to empty strings when repository metadata is missing", async () => {
+		// Bitbucket occasionally omits the repository reference on same-repo
+		// PRs. Treating the fields as optional (empty) keeps `bb pr checkout`'s
+		// fork check from producing false positives.
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						source: { branch: { name: "feature/auth" } },
+						destination: { branch: { name: "main" } },
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.sourceRepositoryFullName).toBe("");
+		expect(result.destinationRepositoryFullName).toBe("");
 	});
 
 	test("handles a PR with no participants", async () => {
