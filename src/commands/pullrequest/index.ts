@@ -3,6 +3,7 @@ import { withRenderer } from "../../shared/renderer/commander.ts";
 import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestDiff } from "./diff.ts";
+import { runPullRequestEdit } from "./edit.ts";
 import { runPullRequestList } from "./list.ts";
 import { runPullRequestReview } from "./review.ts";
 import { runPullRequestView } from "./view.ts";
@@ -85,6 +86,19 @@ export function registerPullRequestCommands(program: Command): void {
 			"Override repository detection",
 		)
 		.action(withRenderer(runPullRequestDiff));
+
+	pr.command("edit")
+		.description(
+			"Update a pull request's title and/or description (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.option("-t, --title <title>", "New title")
+		.option("-d, --description <description>", "New description")
+		.action(withRenderer(runPullRequestEdit));
 
 	pr.command("review")
 		.description(

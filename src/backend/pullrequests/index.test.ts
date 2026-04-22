@@ -15,6 +15,7 @@ import {
 	PullRequestError,
 	requestChangesOnPullRequest,
 	unapprovePullRequest,
+	updatePullRequest,
 	withdrawRequestChanges,
 } from "./index.ts";
 
@@ -916,6 +917,103 @@ describe("review action endpoints (approve / unapprove / request-changes / unreq
 		);
 
 		const err = await approvePullRequest(creds, ref, 99).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("updatePullRequest", () => {
+	test("PUTs title only and returns the updated detail", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.put(PR_DETAIL_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42, title: "new title" }));
+			}),
+		);
+
+		const result = await updatePullRequest(creds, ref, 42, {
+			title: "new title",
+		});
+
+		expect(seenBody!).toEqual({ type: "pullrequest", title: "new title" });
+		expect(seenBody!).not.toHaveProperty("description");
+		expect(result.id).toBe(42);
+		expect(result.title).toBe("new title");
+	});
+
+	test("PUTs description only", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.put(PR_DETAIL_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(
+					makePrDetail({ id: 42, summary: { raw: "new description" } }),
+				);
+			}),
+		);
+
+		await updatePullRequest(creds, ref, 42, {
+			description: "new description",
+		});
+
+		expect(seenBody!).toEqual({
+			type: "pullrequest",
+			description: "new description",
+		});
+		expect(seenBody!).not.toHaveProperty("title");
+	});
+
+	test("PUTs title and description together when both provided", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.put(PR_DETAIL_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42 }));
+			}),
+		);
+
+		await updatePullRequest(creds, ref, 42, {
+			title: "t",
+			description: "d",
+		});
+
+		expect(seenBody!).toEqual({
+			type: "pullrequest",
+			title: "t",
+			description: "d",
+		});
+	});
+
+	test("surfaces 4xx cleanly (e.g. editing a closed PR)", async () => {
+		server.use(
+			http.put(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					{ type: "error", error: { message: "PR is not open" } },
+					{ status: 400 },
+				),
+			),
+		);
+
+		const err = await updatePullRequest(creds, ref, 42, {
+			title: "x",
+		}).catch((e) => e);
+
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(400);
+	});
+
+	test("surfaces 404 when the PR does not exist", async () => {
+		server.use(
+			http.put(PR_DETAIL_PATH(99), () =>
+				HttpResponse.json({ type: "error" }, { status: 404 }),
+			),
+		);
+
+		const err = await updatePullRequest(creds, ref, 99, {
+			title: "x",
+		}).catch((e) => e);
+
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
 	});
