@@ -265,6 +265,58 @@ export async function createPullRequest(
 	return toPullRequestDetail(data as RawPullRequest);
 }
 
+export type UpdatePullRequestInput = {
+	title?: string;
+	description?: string;
+};
+
+/**
+ * PUTs a partial update to a pull request. Bitbucket's spec types the body
+ * as the full `pullrequest` schema and the doc comment only formally
+ * describes "branches or description" updates, but the API accepts partial
+ * bodies in practice for common mutable fields (title, description) — see
+ * docs/bb-notes.md → "Updating a PR".
+ *
+ * The caller is responsible for making sure the PR is in a mutable state
+ * (i.e. OPEN). Non-mutable states surface here as a `PullRequestError`.
+ */
+export async function updatePullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+	input: UpdatePullRequestInput,
+): Promise<PullRequestDetail> {
+	const client = createBitbucketClient(credentials);
+	const { data, response } = await client.PUT(
+		"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}",
+		{
+			params: {
+				path: {
+					workspace: ref.workspace,
+					repo_slug: ref.slug,
+					pull_request_id: pullRequestId,
+				},
+			},
+			body: {
+				type: "pullrequest",
+				...(input.title !== undefined ? { title: input.title } : {}),
+				...(input.description !== undefined
+					? { description: input.description }
+					: {}),
+			},
+		},
+	);
+
+	if (!response.ok || !data) {
+		throw new PullRequestError(
+			`Failed to update pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	return toPullRequestDetail(data as RawPullRequest);
+}
+
 /**
  * Fetches a single pull request by id. Single typed call — the overlay
  * (BBC2-38) gives us typed path params and response shape, so we stay on
