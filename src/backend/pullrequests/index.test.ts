@@ -6,10 +6,12 @@ import {
 	createPullRequest,
 	createPullRequestComment,
 	findOpenPullRequestForBranch,
+	getMergeTaskStatus,
 	getPullRequest,
 	getPullRequestDiff,
 	listEffectiveDefaultReviewers,
 	listPullRequests,
+	mergePullRequest,
 	type PullRequest,
 	type PullRequestDetail,
 	PullRequestError,
@@ -380,6 +382,8 @@ describe("getPullRequest", () => {
 				"A detailed PR description.\n\n- fix thing\n- fix other thing",
 			sourceBranch: "feature/auth",
 			destinationBranch: "main",
+			defaultMergeStrategy: null,
+			allowedMergeStrategies: [],
 			reviewers: [
 				{
 					account: { uuid: "{bob}", displayName: "Bob", nickname: "bob" },
@@ -413,6 +417,72 @@ describe("getPullRequest", () => {
 		const err = await getPullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
+	});
+
+	test("requests merge-strategy fields additively via fields=+...", async () => {
+		// Bitbucket omits `default_merge_strategy` and `merge_strategies`
+		// from the default serialization; bb pr merge needs both. Assert the
+		// `fields` query param is present so we don't silently stop asking
+		// for them.
+		let seenFields: string | null = null;
+		server.use(
+			http.get(PR_DETAIL_PATH(42), ({ request }) => {
+				seenFields = new URL(request.url).searchParams.get("fields");
+				return HttpResponse.json(makePrDetail());
+			}),
+		);
+
+		await getPullRequest(creds, ref, 42);
+
+		expect(seenFields!).toBe(
+			"+destination.branch.default_merge_strategy,+destination.branch.merge_strategies",
+		);
+	});
+
+	test("maps destination.branch merge-strategy fields", async () => {
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						destination: {
+							branch: {
+								name: "main",
+								default_merge_strategy: "squash",
+								merge_strategies: [
+									"merge_commit",
+									"squash",
+									"unknown_future_value",
+								],
+							},
+						},
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.defaultMergeStrategy).toBe("squash");
+		// Unknown strategies are dropped from the allowed list — we'd rather
+		// refuse to forward a bogus value than silently forward it to the
+		// API and take a 400 later.
+		expect(result.allowedMergeStrategies).toEqual(["merge_commit", "squash"]);
+	});
+
+	test("default merge strategy is null when server sends an unknown or missing value", async () => {
+		server.use(
+			http.get(PR_DETAIL_PATH(42), () =>
+				HttpResponse.json(
+					makePrDetail({
+						destination: {
+							branch: { name: "main", default_merge_strategy: "bogus" },
+						},
+					}),
+				),
+			),
+		);
+
+		const result = await getPullRequest(creds, ref, 42);
+		expect(result.defaultMergeStrategy).toBeNull();
 	});
 
 	test("handles a PR with no participants", async () => {
@@ -918,6 +988,215 @@ describe("review action endpoints (approve / unapprove / request-changes / unreq
 		const err = await approvePullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("mergePullRequest", () => {
+	const MERGE_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/merge`;
+
+	test("POSTs the merge_strategy and returns the merged PR on 200", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(MERGE_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42, state: "MERGED" }), {
+					status: 200,
+				});
+			}),
+		);
+
+		const result = await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "squash",
+		});
+
+		expect(seenBody!).toEqual({
+			type: "pullrequest_merge_parameters",
+			merge_strategy: "squash",
+		});
+		expect(result.kind).toBe("done");
+		if (result.kind === "done") {
+			expect(result.pr.id).toBe(42);
+			expect(result.pr.state).toBe("MERGED");
+		}
+	});
+
+	test("passes message and close_source_branch through when set", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(MERGE_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42, state: "MERGED" }));
+			}),
+		);
+
+		await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "merge_commit",
+			message: "custom msg",
+			closeSourceBranch: true,
+		});
+
+		expect(seenBody!).toEqual({
+			type: "pullrequest_merge_parameters",
+			merge_strategy: "merge_commit",
+			message: "custom msg",
+			close_source_branch: true,
+		});
+	});
+
+	test("omits optional fields when not provided", async () => {
+		let seenBody: Record<string, any> | null = null;
+		server.use(
+			http.post(MERGE_PATH(42), async ({ request }) => {
+				seenBody = (await request.json()) as Record<string, any>;
+				return HttpResponse.json(makePrDetail({ id: 42, state: "MERGED" }));
+			}),
+		);
+
+		await mergePullRequest(creds, ref, 42, { mergeStrategy: "squash" });
+
+		expect(seenBody!).not.toHaveProperty("message");
+		expect(seenBody!).not.toHaveProperty("close_source_branch");
+	});
+
+	test("returns {kind:'async', taskUrl} on 202 with Location header", async () => {
+		const location = `${MERGE_PATH(42)}/task-status/abc123`;
+		server.use(
+			http.post(
+				MERGE_PATH(42),
+				() =>
+					new HttpResponse(null, {
+						status: 202,
+						headers: { Location: location },
+					}),
+			),
+		);
+
+		const result = await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "merge_commit",
+		});
+
+		expect(result).toEqual({ kind: "async", taskUrl: location });
+	});
+
+	test("throws PullRequestError on 202 with no Location header", async () => {
+		server.use(
+			http.post(MERGE_PATH(42), () => new HttpResponse(null, { status: 202 })),
+		);
+
+		const err = await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "merge_commit",
+		}).catch((e) => e);
+
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(202);
+	});
+
+	test("409 surfaces as a PullRequestError with a retry-friendly message", async () => {
+		server.use(
+			http.post(MERGE_PATH(42), () => new HttpResponse(null, { status: 409 })),
+		);
+
+		const err = await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "merge_commit",
+		}).catch((e) => e);
+
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(409);
+		expect((err as Error).message).toContain("refs changed");
+	});
+
+	test("555 surfaces as a PullRequestError with a timeout message", async () => {
+		server.use(
+			http.post(MERGE_PATH(42), () =>
+				HttpResponse.json(
+					{ type: "error", error: { message: "timed out" } },
+					{ status: 555 },
+				),
+			),
+		);
+
+		const err = await mergePullRequest(creds, ref, 42, {
+			mergeStrategy: "merge_commit",
+		}).catch((e) => e);
+
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(555);
+		expect((err as Error).message).toContain("timed out");
+	});
+});
+
+describe("getMergeTaskStatus", () => {
+	const TASK_URL =
+		"https://api.bitbucket.org/2.0/repositories/ws/repo/pullrequests/42/merge/task-status/abc";
+
+	test("maps PENDING task status to { status: 'PENDING' }", async () => {
+		server.use(
+			http.get(TASK_URL, () =>
+				HttpResponse.json({
+					task_status: "PENDING",
+					links: { self: { href: TASK_URL } },
+				}),
+			),
+		);
+
+		const result = await getMergeTaskStatus(creds, TASK_URL);
+		expect(result).toEqual({ status: "PENDING" });
+	});
+
+	test("maps SUCCESS task status to { status:'SUCCESS', pr }", async () => {
+		server.use(
+			http.get(TASK_URL, () =>
+				HttpResponse.json({
+					task_status: "SUCCESS",
+					links: { self: { href: TASK_URL } },
+					merge_result: makePrDetail({ id: 42, state: "MERGED" }),
+				}),
+			),
+		);
+
+		const result = await getMergeTaskStatus(creds, TASK_URL);
+		expect(result.status).toBe("SUCCESS");
+		if (result.status === "SUCCESS") {
+			expect(result.pr.id).toBe(42);
+			expect(result.pr.state).toBe("MERGED");
+		}
+	});
+
+	test("maps any other task status to { status:'FAILED', error }", async () => {
+		server.use(
+			http.get(TASK_URL, () =>
+				HttpResponse.json({
+					task_status: "FAILED",
+					error: { message: "conflict at src/x.ts" },
+				}),
+			),
+		);
+
+		const result = await getMergeTaskStatus(creds, TASK_URL);
+		expect(result).toEqual({
+			status: "FAILED",
+			error: "conflict at src/x.ts",
+		});
+	});
+
+	test("SUCCESS without merge_result throws a PullRequestError", async () => {
+		server.use(
+			http.get(TASK_URL, () => HttpResponse.json({ task_status: "SUCCESS" })),
+		);
+
+		const err = await getMergeTaskStatus(creds, TASK_URL).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+	});
+
+	test("non-2xx propagates as PullRequestError with status", async () => {
+		server.use(
+			http.get(TASK_URL, () => new HttpResponse(null, { status: 500 })),
+		);
+
+		const err = await getMergeTaskStatus(creds, TASK_URL).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(500);
 	});
 });
 

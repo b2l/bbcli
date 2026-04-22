@@ -32,6 +32,11 @@ function fakeGit(s: Setup = {}): GitRunner {
 		async getDefaultBranchFromRemote() {
 			return undefined;
 		},
+		async hasLocalBranch() {
+			return false;
+		},
+		async checkoutExistingBranch() {},
+		async deleteLocalBranch() {},
 	};
 }
 
@@ -57,34 +62,47 @@ describe("resolveRepository — override", () => {
 
 	test("does not consult git when override is given", async () => {
 		let called = false;
+		const markCalled = () => {
+			called = true;
+		};
 		const git: GitRunner = {
 			async isInsideWorkTree() {
-				called = true;
+				markCalled();
 				return true;
 			},
 			async listRemotes() {
-				called = true;
+				markCalled();
 				return [];
 			},
 			async getRemoteUrl() {
-				called = true;
+				markCalled();
 				return undefined;
 			},
 			async getCurrentBranch() {
-				called = true;
+				markCalled();
 				return undefined;
 			},
 			async getSha() {
-				called = true;
+				markCalled();
 				return undefined;
 			},
 			async getRemoteBranchSha() {
-				called = true;
+				markCalled();
 				return undefined;
 			},
 			async getDefaultBranchFromRemote() {
-				called = true;
+				markCalled();
 				return undefined;
+			},
+			async hasLocalBranch() {
+				markCalled();
+				return false;
+			},
+			async checkoutExistingBranch() {
+				markCalled();
+			},
+			async deleteLocalBranch() {
+				markCalled();
 			},
 		};
 		await resolveRepository({ override: "ws/repo" }, git);
