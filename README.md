@@ -82,6 +82,35 @@ On success it prints `Logged in to Bitbucket Cloud as <name> (<email>)`.
 If the credentials are missing or invalid, it prints an actionable
 error and exits non-zero.
 
+## Known issue: `bb pr diff | delta` (or `| less`) breaks after the first run
+
+When piping `bb pr diff` to a pager that opens `less` (e.g. `delta`,
+`bat`, `less` itself), scrolling can break — keystrokes get echoed and
+require Enter, instead of single-key navigation. The first invocation
+after a recompile sometimes works; subsequent ones don't.
+
+Root cause is upstream in Bun: its runtime issues `TCSETS2` on stdin and
+stderr at process exit, restoring the terminal to whatever state it
+captured at startup. When that captured state has `ICANON|ECHO` set, the
+terminal ends up in cooked mode for the downstream `less`, which then
+can't get raw keystrokes.
+
+Workaround — redirect both stdin and stderr away from the terminal:
+
+```bash
+bb pr diff <id> </dev/null 2>/dev/null | delta
+```
+
+Or alias it once:
+
+```bash
+alias bbdiff='bb pr diff </dev/null 2>/dev/null'
+# then: bbdiff <id> | delta
+```
+
+Caveat: `2>/dev/null` swallows error output. If you'd rather keep
+errors visible, redirect to a file (`2>/tmp/bb.err`) instead.
+
 ## Development
 
 ```bash
