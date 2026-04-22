@@ -607,6 +607,45 @@ export async function withdrawRequestChanges(
 	);
 }
 
+/**
+ * Declines an open pull request. Bitbucket returns the updated PR (now
+ * in state DECLINED) on success. No request body.
+ *
+ * Expected failure modes: 4xx when the PR is in a terminal state already
+ * (merged, declined, superseded). We let the status propagate — the command
+ * layer does a pre-flight `getPullRequest` to surface those cases with a
+ * clean user-facing message, so this path is only hit on races or unexpected
+ * server errors.
+ */
+export async function declinePullRequest(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<PullRequestDetail> {
+	const client = createBitbucketClient(credentials);
+	const { data, response } = await client.POST(
+		"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/decline",
+		{
+			params: {
+				path: {
+					workspace: ref.workspace,
+					repo_slug: ref.slug,
+					pull_request_id: pullRequestId,
+				},
+			},
+		},
+	);
+
+	if (!response.ok || !data) {
+		throw new PullRequestError(
+			`Failed to decline pull request #${pullRequestId}: HTTP ${response.status}.`,
+			response.status,
+		);
+	}
+
+	return toPullRequestDetail(data as RawPullRequest);
+}
+
 function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 	const base = toPullRequest(pr);
 	const raw = pr as Record<string, any>;

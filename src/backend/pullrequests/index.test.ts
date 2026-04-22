@@ -5,6 +5,7 @@ import {
 	approvePullRequest,
 	createPullRequest,
 	createPullRequestComment,
+	declinePullRequest,
 	findOpenPullRequestForBranch,
 	getPullRequest,
 	getPullRequestDiff,
@@ -916,6 +917,64 @@ describe("review action endpoints (approve / unapprove / request-changes / unreq
 		);
 
 		const err = await approvePullRequest(creds, ref, 99).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("declinePullRequest", () => {
+	const DECLINE_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/decline`;
+
+	test("POSTs with no body and returns the declined PR detail", async () => {
+		let seenMethod: string | null = null;
+		let seenBody: string | null = null;
+		server.use(
+			http.post(DECLINE_PATH(42), async ({ request }) => {
+				seenMethod = request.method;
+				seenBody = await request.text();
+				return HttpResponse.json(makePrDetail({ id: 42, state: "DECLINED" }), {
+					status: 200,
+				});
+			}),
+		);
+
+		const result = await declinePullRequest(creds, ref, 42);
+
+		expect(seenMethod!).toBe("POST");
+		expect(seenBody!).toBe("");
+		expect(result.id).toBe(42);
+		expect(result.state).toBe("DECLINED");
+		expect(result.url).toBe("https://bitbucket.org/ws/repo/pull-requests/42");
+	});
+
+	test("propagates HTTP 4xx when the PR is already in a terminal state", async () => {
+		// Bitbucket returns a 4xx (typically 400) when /decline is called on
+		// a PR that's already merged, declined, or superseded. The command
+		// layer's pre-flight GET handles these cases cleanly; this path
+		// exists for TOCTOU races.
+		server.use(
+			http.post(DECLINE_PATH(42), () =>
+				HttpResponse.json(
+					{ type: "error", error: { message: "PR is not open" } },
+					{ status: 400 },
+				),
+			),
+		);
+
+		const err = await declinePullRequest(creds, ref, 42).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(400);
+	});
+
+	test("surfaces 404 when the PR does not exist", async () => {
+		server.use(
+			http.post(DECLINE_PATH(99), () =>
+				HttpResponse.json({ type: "error" }, { status: 404 }),
+			),
+		);
+
+		const err = await declinePullRequest(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
 	});
