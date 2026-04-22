@@ -65,6 +65,14 @@ export type PullRequestDetail = PullRequest & {
 	description: string;
 	sourceBranch: string;
 	destinationBranch: string;
+	/**
+	 * `workspace/slug` of the source repo. Differs from the destination when
+	 * the PR is fork-based. Consumers that care about cross-repo semantics
+	 * (e.g. `bb pr checkout`, which only supports same-repo PRs) compare
+	 * against `destinationRepositoryFullName`.
+	 */
+	sourceRepositoryFullName: string;
+	destinationRepositoryFullName: string;
 	reviewers: Reviewer[];
 	participants: Participant[];
 };
@@ -615,6 +623,10 @@ function toPullRequestDetail(pr: RawPullRequest): PullRequestDetail {
 		description: String(raw.summary?.raw ?? raw.description ?? ""),
 		sourceBranch: String(raw.source?.branch?.name ?? ""),
 		destinationBranch: String(raw.destination?.branch?.name ?? ""),
+		sourceRepositoryFullName: String(raw.source?.repository?.full_name ?? ""),
+		destinationRepositoryFullName: String(
+			raw.destination?.repository?.full_name ?? "",
+		),
 		reviewers: toReviewers(raw.participants),
 		participants: toParticipants(raw.participants),
 	};

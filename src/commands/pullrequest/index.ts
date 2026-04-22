@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
+import { runPullRequestCheckout } from "./checkout.ts";
 import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestDiff } from "./diff.ts";
@@ -85,6 +86,17 @@ export function registerPullRequestCommands(program: Command): void {
 			"Override repository detection",
 		)
 		.action(withRenderer(runPullRequestDiff));
+
+	pr.command("checkout")
+		.description(
+			"Fetch and check out a pull request's source branch locally (same-repo PRs only)",
+		)
+		.argument("<id>", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.action(withRenderer(runPullRequestCheckout));
 
 	pr.command("review")
 		.description(
