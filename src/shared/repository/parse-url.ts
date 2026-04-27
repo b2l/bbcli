@@ -7,15 +7,18 @@ export type RepositoryRef = { workspace: string; slug: string };
  *   - ssh://git@bitbucket.org/ws/repo(.git)?
  *   - https://bitbucket.org/ws/repo(.git)?
  *   - https://user@bitbucket.org/ws/repo(.git)?
- * The host must be exactly `bitbucket.org` — subdomains and other hosts are
- * rejected. Returns null when the URL doesn't match (caller decides the error).
+ * The host must be `bitbucket.org` or `bitbucket.com` — subdomains and other
+ * hosts are rejected. Returns null when the URL doesn't match (caller decides
+ * the error).
  */
 export function parseBitbucketRemoteUrl(url: string): RepositoryRef | null {
 	const trimmed = url.trim();
 	if (!trimmed) return null;
 
-	// scp-like SSH: git@bitbucket.org:ws/repo(.git)?
-	const scp = /^git@bitbucket\.org:([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(trimmed);
+	// scp-like SSH: git@bitbucket.org:ws/repo(.git)? (also bitbucket.com)
+	const scp = /^git@bitbucket\.(?:org|com):([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(
+		trimmed,
+	);
 	if (scp) return normalize(scp[1]!, scp[2]!);
 
 	// URL-shaped: ssh://, https://, http:// with optional user info.
@@ -26,7 +29,8 @@ export function parseBitbucketRemoteUrl(url: string): RepositoryRef | null {
 		return null;
 	}
 
-	if (parsed.hostname.toLowerCase() !== "bitbucket.org") return null;
+	const host = parsed.hostname.toLowerCase();
+	if (host !== "bitbucket.org" && host !== "bitbucket.com") return null;
 	if (!["https:", "http:", "ssh:"].includes(parsed.protocol)) return null;
 
 	const segments = parsed.pathname.split("/").filter(Boolean);
