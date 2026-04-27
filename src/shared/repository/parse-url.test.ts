@@ -12,6 +12,10 @@ describe("parseBitbucketRemoteUrl", () => {
 		["ssh://git@bitbucket.org/ws/repo.git", "ws", "repo"],
 		// case insensitivity on host + slug normalization
 		["https://BITBUCKET.ORG/WS/Repo.git", "ws", "repo"],
+		// bitbucket.com alternate domain
+		["git@bitbucket.com:ws/repo.git", "ws", "repo"],
+		["https://bitbucket.com/ws/repo.git", "ws", "repo"],
+		["ssh://git@bitbucket.com/ws/repo.git", "ws", "repo"],
 		// trailing whitespace
 		["  git@bitbucket.org:ws/repo.git  ", "ws", "repo"],
 	];
