@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { withRenderer } from "../../shared/renderer/commander.ts";
+import { runPullRequestChecks } from "./checks.ts";
 import { runPullRequestComment } from "./comment.ts";
 import { runPullRequestCreate } from "./create.ts";
 import { runPullRequestDiff } from "./diff.ts";
@@ -85,6 +86,17 @@ export function registerPullRequestCommands(program: Command): void {
 			"Override repository detection",
 		)
 		.action(withRenderer(runPullRequestDiff));
+
+	pr.command("checks")
+		.description(
+			"Show CI check statuses for a pull request (defaults to the PR for the current branch)",
+		)
+		.argument("[id]", "Pull request number")
+		.option(
+			"-R, --repository <workspace/repo>",
+			"Override repository detection",
+		)
+		.action(withRenderer(runPullRequestChecks));
 
 	pr.command("review")
 		.description(
