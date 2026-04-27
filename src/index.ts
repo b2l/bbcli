@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth/index.ts";
+import { registerPipelineCommands } from "./commands/pipeline/index.ts";
 import { registerPullRequestCommands } from "./commands/pullrequest/index.ts";
 import { registerRepoCommands } from "./commands/repo/index.ts";
 import { registerWorkspaceCommands } from "./commands/workspace/index.ts";
@@ -14,6 +15,7 @@ program
 	.option("--json", "Output machine-readable JSON");
 
 registerAuthCommands(program);
+registerPipelineCommands(program);
 registerPullRequestCommands(program);
 registerRepoCommands(program);
 registerWorkspaceCommands(program);
