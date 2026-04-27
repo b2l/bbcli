@@ -3,9 +3,14 @@ import {
 	getRepositoryCloneLinks,
 	RepositoryError,
 } from "../../backend/repositories/index.ts";
+import { listWorkspaces } from "../../backend/workspaces/index.ts";
 import { loadConfigOrExit } from "../../shared/config/index.ts";
 import type { Renderer } from "../../shared/renderer/index.ts";
-import { resolveWorkspaceOrExit } from "./resolve-workspace.ts";
+import { resolveRepository } from "../../shared/repository/index.ts";
+import {
+	resolveWorkspace,
+	WorkspaceResolutionError,
+} from "../../shared/workspace/index.ts";
 
 export type RepoCloneOptions = {
 	repository?: string;
@@ -20,24 +25,28 @@ export async function runRepoClone(
 	const config = await loadConfigOrExit(renderer);
 
 	const { workspace: explicitWs, slug } = parseRepoArg(repo);
-	const workspace = await resolveWorkspaceOrExit(
-		renderer,
-		config,
-		explicitWs ?? options.repository,
-	);
 
-	let cloneUrl: string;
 	try {
+		const workspace = await resolveWorkspace(
+			explicitWs ?? options.repository,
+			async () => {
+				try {
+					return (await resolveRepository({})).workspace;
+				} catch {
+					return undefined;
+				}
+			},
+			async () => (await listWorkspaces(config)).map((w) => w.slug),
+		);
+
 		const links = await getRepositoryCloneLinks(config, {
 			workspace,
 			slug,
 		});
 
-		if (options.https) {
-			cloneUrl = links.https ?? links.ssh ?? "";
-		} else {
-			cloneUrl = links.ssh ?? links.https ?? "";
-		}
+		const cloneUrl = options.https
+			? (links.https ?? links.ssh)
+			: (links.ssh ?? links.https);
 
 		if (!cloneUrl) {
 			renderer.error(
@@ -45,34 +54,40 @@ export async function runRepoClone(
 			);
 			process.exit(1);
 		}
+
+		renderer.message(`Cloning ${workspace}/${slug}...`);
+
+		const result = await $`git clone ${cloneUrl}`.nothrow();
+		if (result.exitCode !== 0) {
+			process.exit(result.exitCode);
+		}
 	} catch (err) {
-		if (err instanceof RepositoryError) {
+		if (
+			err instanceof WorkspaceResolutionError ||
+			err instanceof RepositoryError
+		) {
 			renderer.error(err.message);
 			process.exit(1);
 		}
 		throw err;
 	}
-
-	renderer.message(`Cloning ${workspace}/${slug}...`);
-
-	const result = await $`git clone ${cloneUrl}`.nothrow();
-	if (result.exitCode !== 0) {
-		process.exit(result.exitCode);
-	}
 }
 
 /**
  * Parses the repo argument. Supports two forms:
- * - `workspace/repo` — returns both parts
+ * - `workspace/repo` — returns both parts (lowercased)
  * - `repo` — returns slug only; workspace resolved later
  */
 function parseRepoArg(repo: string): {
 	workspace: string | undefined;
 	slug: string;
 } {
-	const parts = repo.split("/");
-	if (parts.length === 2 && parts[0] && parts[1]) {
-		return { workspace: parts[0], slug: parts[1] };
+	const match = /^([^/\s]+)\/([^/\s]+)$/.exec(repo.trim());
+	if (match) {
+		return {
+			workspace: match[1]!.toLowerCase(),
+			slug: match[2]!.toLowerCase(),
+		};
 	}
-	return { workspace: undefined, slug: repo };
+	return { workspace: undefined, slug: repo.trim().toLowerCase() };
 }
