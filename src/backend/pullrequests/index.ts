@@ -12,6 +12,7 @@ import {
 
 type RawPullRequest = components["schemas"]["pullrequest"];
 type RawParticipant = components["schemas"]["participant"];
+type RawCommitStatus = components["schemas"]["commitstatus"];
 
 export type PullRequestStateFilter = "open" | "merged" | "declined" | "all";
 
@@ -650,4 +651,71 @@ function toReviewState(raw: unknown): ReviewState {
 	if (raw === "approved") return "approved";
 	if (raw === "changes_requested") return "changes_requested";
 	return "pending";
+}
+
+export type CommitStatusState =
+	| "SUCCESSFUL"
+	| "FAILED"
+	| "INPROGRESS"
+	| "STOPPED";
+
+export type CommitStatus = {
+	key: string;
+	name: string;
+	description: string;
+	state: CommitStatusState;
+	url: string;
+};
+
+/**
+ * Fetches all commit statuses for a pull request's head commit. This is
+ * the "is it green?" truth — covers any CI vendor (BB Pipelines, Jenkins,
+ * external webhooks), not just Bitbucket Pipelines.
+ *
+ * Uses the PR-scoped `/statuses` endpoint so we don't need to resolve the
+ * head SHA separately.
+ */
+export async function listPullRequestStatuses(
+	credentials: Credentials,
+	ref: { workspace: string; slug: string },
+	pullRequestId: number,
+): Promise<CommitStatus[]> {
+	const client = createBitbucketClient(credentials);
+
+	try {
+		const raw = await withPagination(
+			() =>
+				client.GET(
+					"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/statuses",
+					{
+						params: {
+							path: {
+								workspace: ref.workspace,
+								repo_slug: ref.slug,
+								pull_request_id: pullRequestId,
+							},
+						},
+					},
+				),
+			credentials,
+			{ limit: 100 },
+		);
+		return raw.map(toCommitStatus);
+	} catch (err) {
+		if (err instanceof PaginationError) {
+			throw new PullRequestError(err.message, err.status);
+		}
+		throw err;
+	}
+}
+
+function toCommitStatus(raw: RawCommitStatus): CommitStatus {
+	const r = raw as Record<string, any>;
+	return {
+		key: String(r.key ?? ""),
+		name: String(r.name ?? r.key ?? ""),
+		description: String(r.description ?? ""),
+		state: String(r.state ?? "INPROGRESS") as CommitStatusState,
+		url: String(r.url ?? ""),
+	};
 }

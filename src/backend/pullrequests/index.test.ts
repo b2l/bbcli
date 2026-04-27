@@ -3,12 +3,14 @@ import { HttpResponse, http } from "msw";
 import { BITBUCKET_BASE, server, setupMsw } from "../../test/msw/server.ts";
 import {
 	approvePullRequest,
+	type CommitStatus,
 	createPullRequest,
 	createPullRequestComment,
 	findOpenPullRequestForBranch,
 	getPullRequest,
 	getPullRequestDiff,
 	listEffectiveDefaultReviewers,
+	listPullRequestStatuses,
 	listPullRequests,
 	type PullRequest,
 	type PullRequestDetail,
@@ -955,6 +957,135 @@ describe("getPullRequestDiff", () => {
 		);
 
 		const err = await getPullRequestDiff(creds, ref, 99).catch((e) => e);
+		expect(err).toBeInstanceOf(PullRequestError);
+		expect((err as PullRequestError).status).toBe(404);
+	});
+});
+
+describe("listPullRequestStatuses", () => {
+	const STATUSES_PATH = (id: number) =>
+		`${BITBUCKET_BASE}/repositories/ws/repo/pullrequests/${id}/statuses`;
+
+	function makeStatus(
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> {
+		return {
+			type: "commitstatus",
+			key: "ci/build",
+			name: "CI Build",
+			description: "Unit tests",
+			state: "SUCCESSFUL",
+			url: "https://ci.example.com/build/1",
+			created_on: "2026-04-20T10:00:00Z",
+			updated_on: "2026-04-20T10:05:00Z",
+			...overrides,
+		};
+	}
+
+	test("returns all statuses for a PR", async () => {
+		server.use(
+			http.get(STATUSES_PATH(42), () =>
+				HttpResponse.json({
+					values: [
+						makeStatus({ key: "ci/build", state: "SUCCESSFUL" }),
+						makeStatus({ key: "ci/lint", state: "FAILED", name: "Lint" }),
+					],
+				}),
+			),
+		);
+
+		const result = await listPullRequestStatuses(creds, ref, 42);
+
+		expect(result).toHaveLength(2);
+		expect(result[0]).toEqual<CommitStatus>({
+			key: "ci/build",
+			name: "CI Build",
+			description: "Unit tests",
+			state: "SUCCESSFUL",
+			url: "https://ci.example.com/build/1",
+		});
+		expect(result[1]?.state).toBe("FAILED");
+		expect(result[1]?.name).toBe("Lint");
+	});
+
+	test("returns empty array when no statuses exist", async () => {
+		server.use(
+			http.get(STATUSES_PATH(42), () => HttpResponse.json({ values: [] })),
+		);
+
+		const result = await listPullRequestStatuses(creds, ref, 42);
+		expect(result).toEqual([]);
+	});
+
+	test("maps all four state values", async () => {
+		server.use(
+			http.get(STATUSES_PATH(42), () =>
+				HttpResponse.json({
+					values: [
+						makeStatus({ key: "a", state: "SUCCESSFUL" }),
+						makeStatus({ key: "b", state: "FAILED" }),
+						makeStatus({ key: "c", state: "INPROGRESS" }),
+						makeStatus({ key: "d", state: "STOPPED" }),
+					],
+				}),
+			),
+		);
+
+		const result = await listPullRequestStatuses(creds, ref, 42);
+		expect(result.map((s) => s.state)).toEqual([
+			"SUCCESSFUL",
+			"FAILED",
+			"INPROGRESS",
+			"STOPPED",
+		]);
+	});
+
+	test("falls back to key when name is missing", async () => {
+		server.use(
+			http.get(STATUSES_PATH(42), () =>
+				HttpResponse.json({
+					values: [makeStatus({ key: "ci/deploy", name: undefined })],
+				}),
+			),
+		);
+
+		const result = await listPullRequestStatuses(creds, ref, 42);
+		expect(result[0]?.name).toBe("ci/deploy");
+	});
+
+	test("handles missing optional fields gracefully", async () => {
+		server.use(
+			http.get(STATUSES_PATH(42), () =>
+				HttpResponse.json({
+					values: [
+						{
+							type: "commitstatus",
+							key: "minimal",
+							state: "SUCCESSFUL",
+						},
+					],
+				}),
+			),
+		);
+
+		const result = await listPullRequestStatuses(creds, ref, 42);
+		expect(result[0]).toEqual<CommitStatus>({
+			key: "minimal",
+			name: "minimal",
+			description: "",
+			state: "SUCCESSFUL",
+			url: "",
+		});
+	});
+
+	test("throws PullRequestError on 404", async () => {
+		server.use(
+			http.get(STATUSES_PATH(99), () =>
+				HttpResponse.json({ type: "error" }, { status: 404 }),
+			),
+		);
+
+		const err = await listPullRequestStatuses(creds, ref, 99).catch((e) => e);
 		expect(err).toBeInstanceOf(PullRequestError);
 		expect((err as PullRequestError).status).toBe(404);
 	});
