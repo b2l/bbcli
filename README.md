@@ -23,6 +23,22 @@ The config file carries your Atlassian email and a way to retrieve your
 Bitbucket API token. Create an API token at
 <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
+You need to generate a scope token (general ones doesn't work, don't know why) and add this scopes:
+
+```
+read:account
+read:me
+read:pipeline:bitbucket
+read:pullrequest:bitbucket
+read:repository:bitbucket
+read:user:bitbucket
+read:workspace:bitbucket
+
+write:pullrequest:bitbucket
+write:repository:bitbucket
+write:user:bitbucket
+```
+
 ### Recommended: fetch the token from a command
 
 The recommended form keeps the token out of the config file by having
